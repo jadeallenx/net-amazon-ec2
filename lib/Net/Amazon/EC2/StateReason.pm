@@ -17,8 +17,6 @@ A class representing additional information on the reason for the current state 
 
 A code for the state change reason.
 
-=back
-
 =item message (required)
 
 A message providing additional information about the state.

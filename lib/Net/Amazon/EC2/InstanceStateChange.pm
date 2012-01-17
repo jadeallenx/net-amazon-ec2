@@ -17,8 +17,6 @@ A class representing the change of a state of an instance.
 
 The instance id in question.
 
-=back
-
 =item current_state (required)
 
 A Net::Amazon::EC2::InstanceState object representing the current state of the instance.

@@ -140,8 +140,6 @@ The region to run the API requests through. The options are:
 
 If set to a true value, the base_url will use https:// instead of http://. Setting base_url explicitly will override this. Use depends on LWP::Protocol::https; if not installed it will die at runtime trying to fetch the url.
 
-=back
-
 =item debug (optional)
 
 A flag to turn on debugging. It is turned off by default
@@ -3566,7 +3564,7 @@ The availability zone you want to run the instance in
 The id of the kernel you want to launch the instance with
 
 =item RamdiskId (optional)
-  
+
 The id of the ramdisk you want to launch the instance with
 
 =item BlockDeviceMapping.VirtualName (optional)

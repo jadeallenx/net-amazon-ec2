@@ -28,6 +28,8 @@ has 'group'			=> ( is => 'ro', isa => 'Maybe[Str]', required => 0 );
 
 __PACKAGE__->meta->make_immutable();
 
+=back
+
 =head1 AUTHOR
 
 Jeff Kim <cpan@chosec.com>

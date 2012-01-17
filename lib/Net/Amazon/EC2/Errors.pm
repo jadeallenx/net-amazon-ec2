@@ -33,6 +33,8 @@ has 'errors'        => (
 
 __PACKAGE__->meta->make_immutable();
 
+=back
+
 =head1 AUTHOR
 
 Jeff Kim <cpan@chosec.com>

@@ -43,6 +43,8 @@ has 'ip_permissions'    => (
 
 __PACKAGE__->meta->make_immutable();
 
+=back
+
 =head1 AUTHOR
 
 Jeff Kim <cpan@chosec.com>
