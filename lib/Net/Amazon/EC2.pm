@@ -1623,6 +1623,7 @@ sub describe_images {
 					push @$block_device_mappings, $block_device_mapping;
 				}
 			}
+			$item->{description} = undef if ref ($item->{description});
 
 			my $image = Net::Amazon::EC2::DescribeImagesResponse->new(
 				image_id				=> $item->{imageId},
