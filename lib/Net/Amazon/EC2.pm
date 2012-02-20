@@ -3611,6 +3611,10 @@ Enables monitoring for this instance.
 
 Specifies the subnet ID within which to launch the instance(s) for Amazon Virtual Private Cloud.
 
+=item ClientToken (optional)
+
+Specifies the idempotent instance id.
+
 =back
 
 Returns a Net::Amazon::EC2::ReservationInfo object
@@ -3642,6 +3646,7 @@ sub run_instances {
 		SubnetId										=> { type => SCALAR, optional => 1 },
 		DisableApiTermination							=> { type => SCALAR, optional => 1 },
 		InstanceInitiatedShutdownBehavior				=> { type => SCALAR, optional => 1 },
+		ClientToken										=> { type => SCALAR, optional => 1 },
 	});
 	
 	# If we have a array ref of instances lets split them out into their SecurityGroup.n format
