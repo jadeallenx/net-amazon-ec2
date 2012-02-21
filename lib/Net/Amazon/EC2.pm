@@ -178,10 +178,11 @@ sub _sign {
 	my %args						= @_;
 	my $action						= delete $args{Action};
 	my %sign_hash					= %args;
-        $self->_clear_timestamp;
+	my $timestamp					= $self->timestamp;
+
 	$sign_hash{AWSAccessKeyId}		= $self->AWSAccessKeyId;
 	$sign_hash{Action}				= $action;
-	$sign_hash{Timestamp}			= $self->timestamp;
+	$sign_hash{Timestamp}			= $timestamp;
 	$sign_hash{Version}				= $self->version;
 	$sign_hash{SignatureVersion}	= $self->signature_version;
 	my $sign_this;
@@ -199,7 +200,7 @@ sub _sign {
 		Action				=> $action,
 		SignatureVersion	=> $self->signature_version,
 		AWSAccessKeyId		=> $self->AWSAccessKeyId,
-		Timestamp			=> $self->timestamp,
+		Timestamp			=> $timestamp,
 		Version				=> $self->version,
 		Signature			=> $encoded,
 		%args
