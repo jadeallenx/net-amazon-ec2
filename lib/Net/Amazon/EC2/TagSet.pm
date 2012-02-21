@@ -1,5 +1,5 @@
 package Net::Amazon::EC2::TagSet;
-use Moose;
+use Any::Moose;
 
 =head1 NAME
 
@@ -41,6 +41,6 @@ under the same terms as Perl itself.
 
 =cut
 
-no Moose;
+no Any::Moose;
 1;
 

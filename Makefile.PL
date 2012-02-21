@@ -14,7 +14,7 @@ requires		'HTTP::Date'		=> 0;
 requires		'URI'				=> 0;
 requires		'Params::Validate'	=> 0;
 requires		'XML::Simple'		=> 2.18;
-requires        'Moose'             => 0.38;
+requires        'Any::Moose'        => 0.18;
 build_requires  'Test::More'        => 0;
 
 no_index;
