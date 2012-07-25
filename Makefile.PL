@@ -15,7 +15,9 @@ requires		'URI'				=> 0;
 requires		'Params::Validate'	=> 0;
 requires		'XML::Simple'		=> 2.18;
 requires        'Moose'             => 0.38;
+requires        'Carp'              => 0;
 build_requires  'Test::More'        => 0;
+build_requires  'Test::Exception'   => 0;
 
 no_index;
 

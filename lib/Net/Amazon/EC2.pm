@@ -12,6 +12,7 @@ use MIME::Base64 qw(encode_base64 decode_base64);
 use HTTP::Date qw(time2isoz);
 use Params::Validate qw(validate SCALAR ARRAYREF HASHREF);
 use Data::Dumper qw(Dumper);
+use Carp;
 
 use Net::Amazon::EC2::DescribeImagesResponse;
 use Net::Amazon::EC2::DescribeKeyPairsResponse;
@@ -100,7 +101,7 @@ version of the EC2 API last updated January 1st, 2011.
 
  my $result = $ec2->terminate_instances(InstanceId => $instance_id);
 
-If an error occurs while communicating with EC2, the return value of these methods will be a Net::Amazon::EC2::Errors object.
+If an error occurs while communicating with EC2, these methods will throw a L<Net::Amazon::EC2::Errors> exception.
 
 =head1 DESCRIPTION
 
@@ -142,7 +143,11 @@ If set to a true value, the base_url will use https:// instead of http://. Setti
 
 =item debug (optional)
 
-A flag to turn on debugging. It is turned off by default
+A flag to turn on debugging. Among other useful things, it will make the failing api calls print an stack trace. It is turned off by default
+
+=item return_errors (optional)
+
+By default, a failed api call will throw a L<Net::Amazon::EC2::Errors> object. Setting this option to a true value will make the failed calls return the object instead of throwing it. It is turned off by default.
 
 =back
 
@@ -155,6 +160,7 @@ has 'signature_version'	=> ( is => 'ro', isa => 'Int', required => 1, default =>
 has 'version'			=> ( is => 'ro', isa => 'Str', required => 1, default => '2011-01-01' );
 has 'region'			=> ( is => 'ro', isa => 'Str', required => 1, default => 'us-east-1' );
 has 'ssl'				=> ( is => 'ro', isa => 'Bool', required => 1, default => 0 );
+has 'return_errors'     => ( is => 'ro', isa => 'Bool', default => 0 );
 has 'base_url'			=> ( 
 	is			=> 'ro', 
 	isa			=> 'Str', 
@@ -265,8 +271,18 @@ sub _parse_errors {
 	foreach my $error (@{$errors->errors}) {
 		$self->_debug("ERROR CODE: " . $error->code . " MESSAGE: " . $error->message . " FOR REQUEST: " . $errors->request_id);
 	}
-	
-	return $errors;	
+
+	# User wants old behaviour
+	if ($self->return_errors) {
+		return $errors;
+	}
+
+	# Print a stack trace if debugging is enabled
+	if ($self->debug) {
+		confess 'Last error was: ' . $es->[-1]->message;
+	} else {
+		croak $errors;
+	}
 }
 
 sub _debug {
