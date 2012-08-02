@@ -52,6 +52,7 @@ has 'zone'			=> ( is => 'ro', isa => 'Str', required => 1 );
 has 'status'		=> ( is => 'ro', isa => 'Str', required => 1 );
 has 'create_time'	=> ( is => 'ro', isa => 'Str', required => 1 );
 has 'attachments'	=> ( is => 'ro', isa => 'Maybe[ArrayRef[Net::Amazon::EC2::Attachment]]', required => 0 );
+has 'tag_set'              => ( is => 'ro', isa => 'Maybe[ArrayRef[Net::Amazon::EC2::TagSet]]', required => 0 );
 
 __PACKAGE__->meta->make_immutable();
 

@@ -2556,6 +2556,18 @@ sub describe_volumes {
  				push @$attachments, $attachment;
 			}
 			
+			my $tags;
+			foreach my $tag_arr (@{$volume_set->{tagSet}{item}}) {
+				if ( ref $tag_arr->{value} eq "HASH" ) {
+					$tag_arr->{value} = "";
+				}
+				my $tag = Net::Amazon::EC2::TagSet->new(
+					key => $tag_arr->{key},
+					value => $tag_arr->{value},
+				);
+				push @$tags, $tag;
+			}
+
 			my $volume = Net::Amazon::EC2::Volume->new(
 				volume_id		=> $volume_set->{volumeId},
 				status			=> $volume_set->{status},
@@ -2563,6 +2575,7 @@ sub describe_volumes {
 				create_time		=> $volume_set->{createTime},
 				snapshot_id		=> $volume_set->{snapshotId},
 				size			=> $volume_set->{size},
+				tag_set                 => $tags,
 				attachments		=> $attachments,
 			);
 			
