@@ -70,7 +70,7 @@ environment.
 =head1 VERSION
 
 This is Net::Amazon::EC2 version 0.19
-EC2 Query API version: '2011-01-01' 
+EC2 Query API version: '2012-07-20'
 
 =head1 SYNOPSIS
 
@@ -161,7 +161,7 @@ has 'AWSAccessKeyId'	=> ( is => 'ro', isa => 'Str', required => 1 );
 has 'SecretAccessKey'	=> ( is => 'ro', isa => 'Str', required => 1 );
 has 'debug'				=> ( is => 'ro', isa => 'Str', required => 0, default => 0 );
 has 'signature_version'	=> ( is => 'ro', isa => 'Int', required => 1, default => 1 );
-has 'version'			=> ( is => 'ro', isa => 'Str', required => 1, default => '2011-01-01' );
+has 'version'			=> ( is => 'ro', isa => 'Str', required => 1, default => '2012-07-20' );
 has 'region'			=> ( is => 'ro', isa => 'Str', required => 1, default => 'us-east-1' );
 has 'ssl'				=> ( is => 'ro', isa => 'Bool', required => 1, default => 0 );
 has 'return_errors'     => ( is => 'ro', isa => 'Bool', default => 0 );
@@ -969,6 +969,16 @@ The optional snapshot id to create the volume from.
 
 The availability zone to create the volume in.
 
+=item VolumeType (optional)
+
+The volume type: 'standard' or 'io1'.  Defaults to 'standard'.
+
+=item Iops (optional)
+
+The number of I/O operations per second (IOPS) that the volume
+supports.  Required when the volume type is io1; not used with
+standard volumes.
+
 =back
 
 Returns a Net::Amazon::EC2::Volume object containing the resulting volume
@@ -982,6 +992,8 @@ sub create_volume {
 		Size				=> { type => SCALAR },
 		SnapshotId			=> { type => SCALAR, optional => 1 },
 		AvailabilityZone	=> { type => SCALAR },
+                VolumeType		=> { type => SCALAR, optional => 1 },
+                Iops			=> { type => SCALAR, optional => 1 },
 	});
 
 	my $xml = $self->_sign(Action  => 'CreateVolume', %args);
@@ -1003,6 +1015,8 @@ sub create_volume {
 			create_time		=> $xml->{createTime},
 			snapshot_id		=> $xml->{snapshotId},
 			size			=> $xml->{size},
+			volume_type		=> $xml->{volumeType},
+			iops			=> $xml->{iops},
 		);
 
 		return $volume;
@@ -2583,6 +2597,8 @@ sub describe_volumes {
 				create_time		=> $volume_set->{createTime},
 				snapshot_id		=> $volume_set->{snapshotId},
 				size			=> $volume_set->{size},
+				volume_type		=> $volume_set->{volumeType},
+				iops			=> $volume_set->{iops},
 				tag_set                 => $tags,
 				attachments		=> $attachments,
 			);
@@ -3674,6 +3690,10 @@ Specifies the subnet ID within which to launch the instance(s) for Amazon Virtua
 
 Specifies the idempotent instance id.
 
+=item EbsOptimized (optional)
+
+Whether the instance is optimized for EBS I/O.
+
 =back
 
 Returns a Net::Amazon::EC2::ReservationInfo object
@@ -3706,6 +3726,7 @@ sub run_instances {
 		DisableApiTermination							=> { type => SCALAR, optional => 1 },
 		InstanceInitiatedShutdownBehavior				=> { type => SCALAR, optional => 1 },
 		ClientToken										=> { type => SCALAR, optional => 1 },
+		EbsOptimized										=> { type => SCALAR, optional => 1 },
 	});
 	
 	# If we have a array ref of instances lets split them out into their SecurityGroup.n format

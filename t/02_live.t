@@ -91,7 +91,8 @@ my $run_result = $ec2->run_instances(
         ImageId         => "ami-26b6534f", # ec2-public-images/developer-image.manifest.xml
         KeyName         => "test_keys", 
         SecurityGroup   => "test_group",
-        InstanceType    => 'm1.small'
+        InstanceType    => 'm1.small',
+        EbsOptimized    => 0,
 );
 isa_ok($run_result, 'Net::Amazon::EC2::ReservationInfo');
 ok($run_result->group_set->[0]->group_name eq "test_group", "Checking for running instance");
@@ -102,7 +103,9 @@ my $running_instances = $ec2->describe_instances();
 my $seen_test_instance = 0;
 foreach my $instance (@{$running_instances}) {
     my $instance_set = $instance->instances_set->[0];
-    if ($instance_set->key_name eq "test_keys" and $instance_set->image_id eq "ami-26b6534f") {
+    my $key_name = $instance_set->key_name || '';
+    my $image_id = $instance_set->image_id || '';
+    if ($key_name eq 'test_keys' and $image_id eq 'ami-26b6534f') {
         $seen_test_instance = 1;
     }
 }

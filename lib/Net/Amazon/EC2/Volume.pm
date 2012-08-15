@@ -37,6 +37,15 @@ The volume's status.
 
 The time the volume was created.
 
+=item volume_type (optional)
+
+The volume type.
+
+=item iops (optional)
+
+The number of I/O operations per second (IOPS) that the volume
+supports (only applies to volumes with a volume_type of io1).
+
 =item attachments (optional)
 
 An array ref of Net:Amazon::EC2::Attachment objects.
@@ -51,6 +60,8 @@ has 'snapshot_id'	=> ( is => 'ro', isa => 'Maybe[Str]', required => 0 );
 has 'zone'			=> ( is => 'ro', isa => 'Str', required => 1 );
 has 'status'		=> ( is => 'ro', isa => 'Str', required => 1 );
 has 'create_time'	=> ( is => 'ro', isa => 'Str', required => 1 );
+has 'volume_type'       => ( is => 'ro', isa => 'Str', default => 'standard');
+has 'iops'              => ( is => 'ro', isa => 'Maybe[Int]');
 has 'attachments'	=> ( is => 'ro', isa => 'Maybe[ArrayRef[Net::Amazon::EC2::Attachment]]', required => 0 );
 has 'tag_set'              => ( is => 'ro', isa => 'Maybe[ArrayRef[Net::Amazon::EC2::TagSet]]', required => 0 );
 
