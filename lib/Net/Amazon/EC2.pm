@@ -3571,7 +3571,9 @@ sub revoke_security_group_ingress {
 
 =head2 run_instances(%params)
 
-This method will start instance(s) of AMIs on EC2. The parameters indicate which AMI to instantiate and how many / what properties they have:
+This method will start instance(s) of AMIs on EC2. The parameters
+indicate which AMI to instantiate and how many / what properties they
+have:
 
 =over
 
@@ -3605,13 +3607,21 @@ Optional data to pass into the instance being started.  Needs to be base64 encod
 
 =item InstanceType (optional)
 
-Specifies the type of instance to start.  The options are:
+Specifies the type of instance to start.
+
+See http://aws.amazon.com/ec2/instance-types
+
+The options are:
 
 =over
 
 =item m1.small (default)
 
-1 EC2 Compute Unit (1 virtual core with 1 EC2 Compute Unit). 32-bit, 1.7GB RAM, 160GB disk
+1 EC2 Compute Unit (1 virtual core with 1 EC2 Compute Unit). 32-bit or 64-bit, 1.7GB RAM, 160GB disk
+
+=item m1.medium Medium Instance
+
+2 EC2 Compute Units (1 virtual core with 2 EC2 Compute Unit), 32-bit or 64-bit, 3.75GB RAM, 410GB disk
 
 =item m1.large: Standard Large Instance
 
@@ -3621,23 +3631,43 @@ Specifies the type of instance to start.  The options are:
 
 8 EC2 Compute Units (4 virtual cores with 2 EC2 Compute Units each). 64-bit, 15GB RAM, 1690GB disk
 
+=item t1.micro Micro Instance
+
+Up to 2 EC2 Compute Units (for short periodic bursts), 32-bit or 64-bit, 613MB RAM, EBS storage only
+
 =item c1.medium: High-CPU Medium Instance
 
-5 EC2 Compute Units (2 virutal cores with 2.5 EC2 Compute Units each). 32-bit, 1.7GB RAM, 350GB disk
+5 EC2 Compute Units (2 virutal cores with 2.5 EC2 Compute Units each). 32-bit or 64-bit, 1.7GB RAM, 350GB disk
 
 =item c1.xlarge: High-CPU Extra Large Instance
 
 20 EC2 Compute Units (8 virtual cores with 2.5 EC2 Compute Units each). 64-bit, 7GB RAM, 1690GB disk
 
-=item m2.2xlarge
+=item m2.2xlarge High-Memory Double Extra Large Instance
 
 13 EC2 Compute Units (4 virtual cores with 3.25 EC2 Compute Units each). 64-bit, 34.2GB RAM, 850GB disk
 
-=item m2.4xlarge
+=item m2.4xlarge High-Memory Quadruple Extra Large Instance
 
 26 EC2 Compute Units (8 virtual cores with 3.25 EC2 Compute Units each). 64-bit, 68.4GB RAM, 1690GB disk
 
-=back 
+=item cc1.4xlarge Cluster Compute Quadruple Extra Large Instance
+
+33.5 EC2 Compute Units (2 x Intel Xeon X5570, quad-core "Nehalem" architecture), 64-bit, 23GB RAM, 1690GB disk, 10Gbit Ethernet
+
+=item cc1.8xlarge Cluster Compute Eight Extra Large Instance
+
+88 EC2 Compute Units (2 x Intel Xeon E5-2670, eight-core "Sandy Bridge" architecture), 64-bit, 60.5GB RAM, 3370GB disk, 10Gbit Ethernet
+
+=item cg1.4xlarge Cluster GPU Quadruple Extra Large Instance
+
+33.5 EC2 Compute Units (2 x Intel Xeon X5570, quad-core "Nehalem" architecture), 64-bit, 22GB RAM 1690GB disk, 10Gbit Ethernet, 2 x NVIDIA Tesla "Fermi" M2050 GPUs
+
+=item hi1.4xlarge High I/O Quadruple Extra Large Instance
+
+35 EC2 Compute Units (16 virtual cores), 60.5GB RAM, 64-bit, 2 x 1024GB SSD disk, 10Gbit Ethernet
+
+=back
 
 =item Placement.AvailabilityZone (optional)
 
