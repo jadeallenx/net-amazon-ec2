@@ -19,7 +19,7 @@ The ID of the group.
 
 =cut
 
-has 'group_id'  => ( is => 'ro', isa => 'Str', required => 1 );
+has 'group_id'  => ( is => 'ro', isa => 'Maybe[Str]', required => 1 );
 has 'group_name' => ( is => 'ro', isa => 'Str', required => 1 );
 
 __PACKAGE__->meta->make_immutable();
