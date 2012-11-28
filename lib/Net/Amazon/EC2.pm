@@ -1,5 +1,6 @@
 package Net::Amazon::EC2;
-use Moose;
+use Moo;
+use MooX::Types::MooseLike::Base;
 
 use strict;
 use vars qw($VERSION);
@@ -170,61 +171,43 @@ If you want/need the old behavior, set this attribute to a true value.
 
 =cut
 
-has 'AWSAccessKeyId' => (
-	is => 'ro',
-	isa => 'Str',
-	required => 1,
-	lazy => 1,
-	default => sub {
-		if (defined($_[0]->temp_creds)) {
-			return $_[0]->temp_creds->{'AccessKeyId'};
-		} else {
-			return undef;
-		}
-	}
-);
-has 'SecretAccessKey' => ( 
-	is => 'ro',
-	isa => 'Str',
-	required => 1,
-	lazy => 1,
-	default => sub {
-		if (defined($_[0]->temp_creds)) {
-			return $_[0]->temp_creds->{'SecretAccessKey'};
-		} else {
-			return undef;
-		}
-	}
-);
-has 'SecurityToken' => ( 
-	is => 'ro',
-	isa => 'Str',
-	required => 0,
-	lazy => 1,
-	predicate => 'has_SecurityToken',
-	default => sub {
-		if (defined($_[0]->temp_creds)) {
-			return $_[0]->temp_creds->{'Token'};
-		} else {
-			return undef;
-		}
-	}
-);
-has 'debug'             => ( is => 'ro', isa => 'Str', required => 0, default => 0 );
-has 'signature_version' => ( is => 'ro', isa => 'Int', required => 1, default => 2 );
-has 'version'           => ( is => 'ro', isa => 'Str', required => 1, default => '2014-06-15' );
-has 'region'            => ( is => 'ro', isa => 'Str', required => 1, default => 'us-east-1' );
-has 'ssl'               => ( is => 'ro', isa => 'Bool', required => 1, default => 1 );
-has 'return_errors'     => ( is => 'ro', isa => 'Bool', default => 0 );
-has 'base_url'          => (
-	is       => 'ro',
-	isa      => 'Str',
-	required => 1,
-	lazy     => 1,
-	default  => sub {
-		return 'http' . ($_[0]->ssl ? 's' : '') . '://ec2.' . $_[0]->region . '.amazonaws.com';
-	}
-);
+has 'AWSAccessKeyId'	=> ( is => 'ro', isa => Str, required => 1, lazy => 1,
+                             default => sub {
+                                 if (defined($_[0]->temp_creds)) {
+                                     return $_[0]->temp_creds->{'AccessKeyId'};
+                                 } else {
+                                     return undef;
+                                 }
+                             }  );
+has 'SecretAccessKey'	=> ( is => 'ro', isa => Str, required => 1, lazy => 1,
+                             default => sub {
+                                 if (defined($_[0]->temp_creds)) {
+                                     return $_[0]->temp_creds->{'SecretAccessKey'};
+                                 } else {
+                                     return undef;
+                                 }
+                             } );
+has 'SecurityToken' => (is => 'ro', isa => Str, required => 0, lazy => 1,
+                        predicate => 'has_SecurityToken',
+                        default => sub {
+                            if (defined($_[0]->temp_creds)) {
+                                return $_[0]->temp_creds->{'Token'};
+                            } else {
+                                return undef;
+                            }
+                        }
+                       );
+has 'debug'				=> ( is => 'ro', isa => Str, required => 0, default => sub {0} );
+has 'signature_version'	=> ( is => 'ro', isa => Int, required => 1, default => sub {2} );
+has 'version'			=> ( is => 'ro', isa => Str, required => 1, default => sub {'2012-07-20'} );
+has 'region'			=> ( is => 'ro', isa => Str, required => 1, default => sub {'us-east-1'} );
+has 'ssl'				=> ( is => 'ro', isa => Bool, required => 1, default => sub {1} );
+has 'return_errors'     => ( is => 'ro', isa => Bool, default => sub {0} );
+has 'base_url'			=> ( is => 'ro', isa => Str, required => 1, lazy => 1,
+                             default => sub {
+                                 return 'http' . ($_[0]->ssl ? 's' : '') . '://ec2.' . $_[0]->region . '.amazonaws.com';
+                             }
+                           );
 has 'temp_creds' => (
 	is      => 'ro',
 	lazy    => 1,

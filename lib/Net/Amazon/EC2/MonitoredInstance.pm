@@ -1,5 +1,5 @@
 package Net::Amazon::EC2::MonitoredInstance;
-use Moose;
+use Moo;
 
 =head1 NAME
 
@@ -25,10 +25,8 @@ The state of monitoring of this instance.
 
 =cut
 
-has 'instance_id'	=> ( is => 'ro', isa => 'Str', required => 1 );
-has 'state'			=> ( is => 'ro', isa => 'Str', required => 1 );
-
-__PACKAGE__->meta->make_immutable();
+has 'instance_id'	=> ( is => 'ro', required => 1 );
+has 'state'			=> ( is => 'ro', required => 1 );
 
 =head1 AUTHOR
 
@@ -41,5 +39,4 @@ under the same terms as Perl itself.
 
 =cut
 
-no Moose;
 1;

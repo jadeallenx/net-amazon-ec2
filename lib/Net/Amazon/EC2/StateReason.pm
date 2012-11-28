@@ -1,5 +1,5 @@
 package Net::Amazon::EC2::StateReason;
-use Moose;
+use Moo;
 
 =head1 NAME
 
@@ -25,10 +25,8 @@ A message providing additional information about the state.
 
 =cut
 
-has 'code'		=> ( is => 'ro', isa => 'Int|Str' );
-has 'message' 	=> ( is => 'ro', isa => 'Str' );
-
-__PACKAGE__->meta->make_immutable();
+has 'code'		=> ( is => 'ro' );
+has 'message' 	=> ( is => 'ro' );
 
 =head1 AUTHOR
 
@@ -41,5 +39,4 @@ under the same terms as Perl itself.
 
 =cut
 
-no Moose;
 1;

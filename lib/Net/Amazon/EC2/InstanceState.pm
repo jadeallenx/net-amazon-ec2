@@ -1,5 +1,5 @@
 package Net::Amazon::EC2::InstanceState;
-use Moose;
+use Moo;
 
 =head1 NAME
 
@@ -55,10 +55,8 @@ The current named state of the instance. Valid values are:
 
 =cut
 
-has 'code'  => ( is => 'ro', isa => 'Int' );
-has 'name'  => ( is => 'ro', isa => 'Str' );
-
-__PACKAGE__->meta->make_immutable();
+has 'code'  => ( is => 'ro' );
+has 'name'  => ( is => 'ro' );
 
 =back
 
@@ -73,5 +71,4 @@ under the same terms as Perl itself.
 
 =cut
 
-no Moose;
 1;

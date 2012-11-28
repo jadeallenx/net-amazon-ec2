@@ -1,5 +1,5 @@
 package Net::Amazon::EC2::TagSet;
-use Moose;
+use Moo;
 
 =head1 NAME
 
@@ -23,10 +23,8 @@ The value of the tag. (May be undefined if there is no value for a given key.)
 
 =cut
 
-has 'key'   => ( is => 'ro', isa => 'Str', required => 1 );
-has 'value' => ( is => 'ro', isa => 'Maybe[Str]', required => 1 );
-
-__PACKAGE__->meta->make_immutable();
+has 'key'   => ( is => 'ro', required => 1 );
+has 'value' => ( is => 'ro', required => 1 );
 
 =back
 
@@ -41,6 +39,4 @@ under the same terms as Perl itself.
 
 =cut
 
-no Moose;
 1;
-

@@ -1,5 +1,5 @@
 package Net::Amazon::EC2::Attachment;
-use Moose;
+use Moo;
 
 =head1 NAME
 
@@ -41,14 +41,12 @@ This boolean indicates if an volume is terminated upon instance termination.
 
 =cut
 
-has 'volume_id'				=> ( is => 'ro', isa => 'Str', required => 1 );
-has 'instance_id'			=> ( is => 'ro', isa => 'Maybe[Str]', required => 0 );
-has 'device'				=> ( is => 'ro', isa => 'Str', required => 1 );
-has 'status'				=> ( is => 'ro', isa => 'Str', required => 1 );
-has 'attach_time'			=> ( is => 'ro', isa => 'Str', required => 1 );
-has 'delete_on_termination'	=> ( is => 'ro', isa => 'Maybe[Str]', required => 0 );
-
-__PACKAGE__->meta->make_immutable();
+has 'volume_id'				=> ( is => 'ro', required => 1 );
+has 'instance_id'			=> ( is => 'ro', required => 0 );
+has 'device'				=> ( is => 'ro', required => 1 );
+has 'status'				=> ( is => 'ro', required => 1 );
+has 'attach_time'			=> ( is => 'ro', required => 1 );
+has 'delete_on_termination'	=> ( is => 'ro', required => 0 );
 
 =head1 AUTHOR
 
@@ -61,5 +59,4 @@ under the same terms as Perl itself.
 
 =cut
 
-no Moose;
 1;

@@ -1,6 +1,5 @@
 package Net::Amazon::EC2::UserData;
-use strict;
-use Moose;
+use Moo;
 
 =head1 NAME
 
@@ -20,9 +19,7 @@ User data itself which is passed to the instance.
 
 =cut
 
-has 'data'	=> ( is => 'ro', isa => 'Str', required => 1 );
-
-__PACKAGE__->meta->make_immutable();
+has 'data'	=> ( is => 'ro', required => 1 );
 
 =back
 
@@ -37,5 +34,4 @@ under the same terms as Perl itself.
 
 =cut
 
-no Moose;
 1;

@@ -1,5 +1,5 @@
 package Net::Amazon::EC2::Region;
-use Moose;
+use Moo;
 
 =head1 NAME
 
@@ -25,10 +25,8 @@ The region service endpoint.
 
 =cut
 
-has 'region_name'		=> ( is => 'ro', isa => 'Str', required => 1 );
-has 'region_endpoint'	=> ( is => 'ro', isa => 'Str', required => 1 );
-
-__PACKAGE__->meta->make_immutable();
+has 'region_name'		=> ( is => 'ro', required => 1 );
+has 'region_endpoint'	=> ( is => 'ro', required => 1 );
 
 =head1 AUTHOR
 
@@ -41,5 +39,4 @@ under the same terms as Perl itself.
 
 =cut
 
-no Moose;
 1;

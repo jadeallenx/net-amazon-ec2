@@ -1,6 +1,5 @@
 package Net::Amazon::EC2::LaunchPermissionOperation;
-use strict;
-use Moose;
+use Moo;
 
 =head1 NAME
 
@@ -26,10 +25,8 @@ An Net::Amazon::EC2::LaunchPermission object to remove permissions for.
 
 =cut
 
-has 'add'			=> ( is => 'ro', isa => 'Net::Amazon::EC2::LaunchPermission', required => 0 );
-has 'remove'		=> ( is => 'ro', isa => 'Net::Amazon::EC2::LaunchPermission', required => 0 );
-
-__PACKAGE__->meta->make_immutable();
+has 'add'			=> ( is => 'ro', required => 0 );
+has 'remove'		=> ( is => 'ro', required => 0 );
 
 =head1 AUTHOR
 
@@ -43,4 +40,3 @@ under the same terms as Perl itself.
 =cut
 
 no Moose;
-1;

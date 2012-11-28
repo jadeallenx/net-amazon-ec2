@@ -1,5 +1,6 @@
 package Net::Amazon::EC2::DescribeImagesResponse;
-use Moose;
+use Moo;
+use MooX::Types::MooseLike::Base;
 
 =head1 NAME
 
@@ -102,32 +103,29 @@ An array ref of Net::Amazon::EC2::BlockDeviceMapping objects.
 
 =cut
 
-has 'image_id'          	=> ( is => 'ro', isa => 'Str', required => 1 );
-has 'image_location'    	=> ( is => 'ro', isa => 'Str', required => 1 );
-has 'image_state'       	=> ( is => 'ro', isa => 'Str', required => 1 );
-has 'image_owner_id'    	=> ( is => 'ro', isa => 'Str', required => 1 );
-has 'is_public'         	=> ( is => 'ro', isa => 'Str', required => 1 );
+has 'image_id'          	=> ( is => 'ro', required => 1 );
+has 'image_location'    	=> ( is => 'ro', required => 1 );
+has 'image_state'       	=> ( is => 'ro', required => 1 );
+has 'image_owner_id'    	=> ( is => 'ro', required => 1 );
+has 'is_public'         	=> ( is => 'ro', required => 1 );
 has 'product_codes'     	=> ( 
     is          => 'rw', 
-    isa         => 'Maybe[ArrayRef[Net::Amazon::EC2::ProductCode]]', 
-    predicate   => 'has_product_codes',
+    predicate   => 1,
     required	=> 0,
 );
-has 'architecture'			=> ( is => 'ro', isa => 'Str', required => 0 );
-has 'image_type'			=> ( is => 'ro', isa => 'Maybe[Str]', required => 0 );
-has 'kernel_id'				=> ( is => 'ro', isa => 'Maybe[Str]', required => 0 );
-has 'ramdisk_id'			=> ( is => 'ro', isa => 'Maybe[Str]', required => 0 );
-has 'platform'				=> ( is => 'ro', isa => 'Maybe[Str]', required => 0 );
-has 'state_reason'			=> ( is => 'ro', isa => 'Maybe[Net::Amazon::EC2::StateReason]', required => 0 );
-has 'image_owner_alias'		=> ( is => 'ro', isa => 'Maybe[Str]', required => 0 );
-has 'name'					=> ( is => 'ro', isa => 'Maybe[Str]', required => 0 );
-has 'description'			=> ( is => 'ro', isa => 'Maybe[Str]', required => 0 );
-has 'root_device_type'		=> ( is => 'ro', isa => 'Maybe[Str]', required => 0 );
-has 'root_device_name'		=> ( is => 'ro', isa => 'Maybe[Str]', required => 0 );
-has 'block_device_mapping'	=> ( is => 'ro', isa => 'Maybe[ArrayRef[Net::Amazon::EC2::BlockDeviceMapping]]', required => 0 );
-has 'tag_set'		        => ( is => 'ro', isa => 'Maybe[ArrayRef[Net::Amazon::EC2::TagSet]]', required => 0 );
-
-__PACKAGE__->meta->make_immutable();
+has 'architecture'			=> ( is => 'ro', isa => Str, required => 0 );
+has 'image_type'			=> ( is => 'ro', isa => Maybe[Str], required => 0 );
+has 'kernel_id'				=> ( is => 'ro', isa => Maybe[Str], required => 0 );
+has 'ramdisk_id'			=> ( is => 'ro', isa => Maybe[Str], required => 0 );
+has 'platform'				=> ( is => 'ro', isa => Maybe[Str], required => 0 );
+has 'state_reason'			=> ( is => 'ro', isa => Maybe[Net::Amazon::EC2::StateReason], required => 0 );
+has 'image_owner_alias'		=> ( is => 'ro', isa => Maybe[Str], required => 0 );
+has 'name'					=> ( is => 'ro', isa => Maybe[Str], required => 0 );
+has 'description'			=> ( is => 'ro', isa => Maybe[Str], required => 0 );
+has 'root_device_type'		=> ( is => 'ro', isa => Maybe[Str], required => 0 );
+has 'root_device_name'		=> ( is => 'ro', isa => Maybe[Str], required => 0 );
+has 'block_device_mapping'	=> ( is => 'ro', isa => Maybe[ArrayRef[Net::Amazon::EC2::BlockDeviceMapping]], required => 0 );
+has 'tag_set'		        => ( is => 'ro', isa => Maybe[ArrayRef[Net::Amazon::EC2::TagSet]], required => 0 );
 
 =head1 AUTHOR
 
@@ -140,5 +138,4 @@ under the same terms as Perl itself.
 
 =cut
 
-no Moose;
 1;

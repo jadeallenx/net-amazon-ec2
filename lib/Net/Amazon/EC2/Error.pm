@@ -1,5 +1,6 @@
 package Net::Amazon::EC2::Error;
-use Moose;
+use Moo;
+use MooX::Types::MooseLike::Base;
 
 =head1 NAME
 
@@ -25,15 +26,13 @@ The long form message about the error.
 
 use overload '""' => 'as_string';
 
-has 'code'      => ( is => 'ro', isa => 'Str', required => 1 );
-has 'message'   => ( is => 'ro', isa => 'Str', required => 1 );
+has 'code'      => ( is => 'ro', isa => Str, required => 1 );
+has 'message'   => ( is => 'ro', isa => Str, required => 1 );
 
 sub as_string {
   my $self = shift;
   return '['.$self->code.'] '.$self->message;
 }
-
-__PACKAGE__->meta->make_immutable();
 
 =back
 
@@ -48,5 +47,4 @@ under the same terms as Perl itself.
 
 =cut
 
-no Moose;
 1;
