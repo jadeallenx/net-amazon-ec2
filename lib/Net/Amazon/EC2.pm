@@ -16,51 +16,11 @@ use Data::Dumper qw(Dumper);
 use URI::Escape qw(uri_escape_utf8);
 use Carp;
 
-use Net::Amazon::EC2::DescribeImagesResponse;
-use Net::Amazon::EC2::DescribeKeyPairsResponse;
-use Net::Amazon::EC2::GroupSet;
-use Net::Amazon::EC2::InstanceState;
-use Net::Amazon::EC2::IpPermission;
-use Net::Amazon::EC2::LaunchPermission;
-use Net::Amazon::EC2::LaunchPermissionOperation;
-use Net::Amazon::EC2::ProductCode;
-use Net::Amazon::EC2::ProductInstanceResponse;
-use Net::Amazon::EC2::ReservationInfo;
-use Net::Amazon::EC2::RunningInstances;
-use Net::Amazon::EC2::SecurityGroup;
-use Net::Amazon::EC2::UserData;
-use Net::Amazon::EC2::UserIdGroupPair;
-use Net::Amazon::EC2::IpRange;
-use Net::Amazon::EC2::KeyPair;
-use Net::Amazon::EC2::DescribeImageAttribute;
-use Net::Amazon::EC2::ConsoleOutput;
-use Net::Amazon::EC2::Errors;
-use Net::Amazon::EC2::Error;
-use Net::Amazon::EC2::ConfirmProductInstanceResponse;
-use Net::Amazon::EC2::DescribeAddress;
-use Net::Amazon::EC2::AvailabilityZone;
-use Net::Amazon::EC2::BlockDeviceMapping;
-use Net::Amazon::EC2::PlacementResponse;
-use Net::Amazon::EC2::Volume;
-use Net::Amazon::EC2::Attachment;
-use Net::Amazon::EC2::Snapshot;
-use Net::Amazon::EC2::BundleInstanceResponse;
-use Net::Amazon::EC2::Region;
-use Net::Amazon::EC2::ReservedInstance;
-use Net::Amazon::EC2::ReservedInstanceOffering;
-use Net::Amazon::EC2::MonitoredInstance;
-use Net::Amazon::EC2::InstancePassword;
-use Net::Amazon::EC2::SnapshotAttribute;
-use Net::Amazon::EC2::CreateVolumePermission;
-use Net::Amazon::EC2::AvailabilityZoneMessage;
-use Net::Amazon::EC2::StateReason;
-use Net::Amazon::EC2::InstanceBlockDeviceMapping;
-use Net::Amazon::EC2::InstanceStateChange;
-use Net::Amazon::EC2::DescribeInstanceAttributeResponse;
-use Net::Amazon::EC2::EbsInstanceBlockDeviceMapping;
-use Net::Amazon::EC2::EbsBlockDevice;
-use Net::Amazon::EC2::TagSet;
-use Net::Amazon::EC2::DescribeTags;
+# load our related classes and create our attributes to manage them
+with 'MooseX::RelatedClasses' => {
+    -version         => 0.002,
+    all_in_namespace => 1,
+};
 
 $VERSION = '0.23';
 
@@ -267,7 +227,7 @@ sub _parse_errors {
 	my $request_id = $errors_xml->{RequestID};
 
 	foreach my $e (@{$errors_xml->{Errors}}) {
-		my $error = Net::Amazon::EC2::Error->new(
+		my $error = $self->error_class->new(
 			code	=> $e->{Error}{Code},
 			message	=> $e->{Error}{Message},
 		);
@@ -275,7 +235,7 @@ sub _parse_errors {
 		push @$es, $error;
 	}
 	
-	my $errors = Net::Amazon::EC2::Errors->new(
+	my $errors = $self->errors_class->new(
 		request_id	=> $request_id,
 		errors		=> $es,
 	);
@@ -438,7 +398,7 @@ sub attach_volume {
 		return $self->_parse_errors($xml);
 	}
 	else {
-		my $attachment = Net::Amazon::EC2::Attachment->new(
+		my $attachment = $self->attachment_class->new(
 			volume_id	=> $xml->{volumeId},
 			status		=> $xml->{status},
 			instance_id	=> $xml->{instanceId},
@@ -591,7 +551,7 @@ sub bundle_instance {
 		return $self->_parse_errors($xml);
 	}
 	else {
-		my $bundle = Net::Amazon::EC2::BundleInstanceResponse->new(
+		my $bundle = $self->bundle_instance_response_class->new(
 			instance_id					=> $xml->{bundleInstanceTask}{instanceId},
 			bundle_id					=> $xml->{bundleInstanceTask}{bundleId},
 			state						=> $xml->{bundleInstanceTask}{state},
@@ -639,7 +599,7 @@ sub cancel_bundle_task {
 		return $self->_parse_errors($xml);
 	}
 	else {
-		my $bundle = Net::Amazon::EC2::BundleInstanceResponse->new(
+		my $bundle = $self->bundle_instance_response_class->new(
 			instance_id					=> $xml->{bundleInstanceTask}{instanceId},
 			bundle_id					=> $xml->{bundleInstanceTask}{bundleId},
 			state						=> $xml->{bundleInstanceTask}{state},
@@ -692,7 +652,7 @@ sub confirm_product_instance {
 		return $self->_parse_errors($xml);
 	}
 	else {
-		my $confirm_response = Net::Amazon::EC2::ConfirmProductInstanceResponse->new(
+		my $confirm_response = $self->confirm_product_instance_response_class->new(
 			'return'		=> $xml->{'return'},
 			owner_id		=> $xml->{ownerId},
 		);
@@ -786,7 +746,7 @@ sub create_key_pair {
 		return $self->_parse_errors($xml);
 	}
 	else {
-		my $key_pair = Net::Amazon::EC2::KeyPair->new(
+		my $key_pair = $self->key_pair_class->new(
 			key_name		=> $xml->{keyName},
 			key_fingerprint	=> $xml->{keyFingerprint},
 			key_material	=> $xml->{keyMaterial},
@@ -877,7 +837,7 @@ sub create_snapshot {
 			$xml->{progress} = undef;
 		}
 
-		my $snapshot = Net::Amazon::EC2::Snapshot->new(
+		my $snapshot = $self->snapshot_class->new(
 			snapshot_id		=> $xml->{snapshotId},
 			status			=> $xml->{status},
 			volume_id		=> $xml->{volumeId},
@@ -1014,7 +974,7 @@ sub create_volume {
 			$xml->{snapshotId} = undef;
 		}
 
-		my $volume = Net::Amazon::EC2::Volume->new(
+		my $volume = $self->volume_class->new(
 			volume_id		=> $xml->{volumeId},
 			status			=> $xml->{status},
 			zone			=> $xml->{availabilityZone},
@@ -1329,7 +1289,7 @@ sub describe_addresses {
 				undef $addy->{instanceId};
 			}
 			
-			my $address = Net::Amazon::EC2::DescribeAddress->new(
+			my $address = $self->describe_address_class->new(
 				public_ip	=> $addy->{publicIp},
 				instance_id	=> $addy->{instanceId},
 			);
@@ -1384,14 +1344,14 @@ sub describe_availability_zones {
 			my $availability_zone_messages;
 			# Create the messages for this zone
 			foreach my $azm (@{$az->{messageSet}{item}}) {
-				my $availability_zone_message = Net::Amazon::EC2::AvailabilityZoneMessage->new(
+				my $availability_zone_message = $self->availability_zone_message_class->new(
 					message => $azm->{message},
 				);
 				
 				push @$availability_zone_messages, $availability_zone_message;
 			}
 			
-			my $availability_zone = Net::Amazon::EC2::AvailabilityZone->new(
+			my $availability_zone = $self->availability_zone_class->new(
 				zone_name	=> $az->{zoneName},
 				zone_state	=> $az->{zoneState},
 				region_name	=> $az->{regionName},
@@ -1436,7 +1396,7 @@ sub describe_bundle_tasks {
 		my $bundle_tasks;
 		
 		foreach my $item (@{$xml->{bundleInstanceTasksSet}{item}}) {
-			my $bundle = Net::Amazon::EC2::BundleInstanceResponse->new(
+			my $bundle = $self->bundle_instance_response_class->new(
 				instance_id					=> $item->{instanceId},
 				bundle_id					=> $item->{bundleId},
 				state						=> $item->{state},
@@ -1522,7 +1482,7 @@ sub describe_image_attribute {
 		
 		if ( grep { defined && length } $xml->{launchPermission}{item} ) {
 			foreach my $lp (@{$xml->{launchPermission}{item}}) {
-				my $launch_permission = Net::Amazon::EC2::LaunchPermission->new(
+				my $launch_permission = $self->launch_permission_class->new(
 					group	=> $lp->{group},
 					user_id	=> $lp->{userId},
 				);
@@ -1533,7 +1493,7 @@ sub describe_image_attribute {
 
 		if ( grep { defined && length } $xml->{productCodes}{item} ) {
 			foreach my $pc (@{$xml->{productCodes}{item}}) {
-				my $product_code = Net::Amazon::EC2::ProductCode->new(
+				my $product_code = $self->product_code_class->new(
 					product_code	=> $pc->{productCode},
 				);
 				
@@ -1543,7 +1503,7 @@ sub describe_image_attribute {
 		
 		if ( grep { defined && length } $xml->{blockDeviceMapping}{item} ) {
 			foreach my $bd (@{$xml->{blockDeviceMapping}{item}}) {
-				my $block_device_mapping = Net::Amazon::EC2::BlockDeviceMapping->new(
+				my $block_device_mapping = $self->block_device_mapping_class->new(
 					virtual_name	=> $bd->{virtualName},
 					device_name		=> $bd->{deviceName},
 				);
@@ -1552,7 +1512,7 @@ sub describe_image_attribute {
 			}
 		}
 		
-		my $describe_image_attribute = Net::Amazon::EC2::DescribeImageAttribute->new(
+		my $describe_image_attribute = $self->describe_image_attribute_class->new(
 			image_id			=> $xml->{imageId},
 			launch_permissions	=> $launch_permissions,
 			product_codes		=> $product_codes,
@@ -1642,7 +1602,7 @@ sub describe_images {
 			my $block_device_mappings;
 			
 			if ( grep { defined && length } $item->{stateReason} ) {
-				$state_reason = Net::Amazon::EC2::StateReason->new(
+				$state_reason = $self->state_reason_class->new(
 					code	=> $item->{stateReason}{code},
 					message	=> $item->{stateReason}{message},
 				);
@@ -1655,7 +1615,7 @@ sub describe_images {
 					my $ebs_block_device_mapping;
 					
 					if ( grep { defined && length } $bdm->{ebs} ) {
-						$ebs_block_device_mapping = Net::Amazon::EC2::EbsBlockDevice->new(
+						$ebs_block_device_mapping = $self->ebs_block_device_class->new(
 							snapshot_id				=> $bdm->{ebs}{snapshotId},
 							volume_size				=> $bdm->{ebs}{volumeSize},
 							delete_on_termination	=> $bdm->{ebs}{deleteOnTermination},							
@@ -1663,7 +1623,7 @@ sub describe_images {
 					}
 					
 					
-					my $block_device_mapping = Net::Amazon::EC2::BlockDeviceMapping->new(
+					my $block_device_mapping = $self->block_device_mapping_class->new(
 						device_name		=> $bdm->{deviceName},
 						virtual_name	=> $virtual_name,
 						ebs				=> $ebs_block_device_mapping,
@@ -1674,7 +1634,7 @@ sub describe_images {
 			}
 			$item->{description} = undef if ref ($item->{description});
 
-			my $image = Net::Amazon::EC2::DescribeImagesResponse->new(
+			my $image = $self->describe_images_response_class->new(
 				image_id				=> $item->{imageId},
 				image_owner_id			=> $item->{imageOwnerId},
 				image_state				=> $item->{imageState},
@@ -1696,7 +1656,7 @@ sub describe_images {
 			
 			if (grep { defined && length } $item->{productCodes} ) {
 				foreach my $pc (@{$item->{productCodes}{item}}) {
-					my $product_code = Net::Amazon::EC2::ProductCode->new( product_code => $pc->{productCode} );
+					my $product_code = $self->product_code_class->new( product_code => $pc->{productCode} );
 					push @$product_codes, $product_code;
 				}
 				
@@ -1761,7 +1721,7 @@ sub describe_instances {
 		foreach my $reservation_set (@{$xml->{reservationSet}{item}}) {
 			my $group_sets=[];
 			foreach my $group_arr (@{$reservation_set->{groupSet}{item}}) {
-				my $group = Net::Amazon::EC2::GroupSet->new(
+				my $group = $self->group_set_class->new(
 					group_id => $group_arr->{groupId},
 					group_name => $group_arr->{groupName},
 				);
@@ -1770,7 +1730,7 @@ sub describe_instances {
 	
 			my $running_instances;
 			foreach my $instance_elem (@{$reservation_set->{instancesSet}{item}}) {
-				my $instance_state_type = Net::Amazon::EC2::InstanceState->new(
+				my $instance_state_type = $self->instance_state_class->new(
 					code	=> $instance_elem->{instanceState}{code},
 					name	=> $instance_elem->{instanceState}{name},
 				);
@@ -1781,21 +1741,21 @@ sub describe_instances {
 				
 				if (grep { defined && length } $instance_elem->{productCodes} ) {
 					foreach my $pc (@{$instance_elem->{productCodes}{item}}) {
-						my $product_code = Net::Amazon::EC2::ProductCode->new( product_code => $pc->{productCode} );
+						my $product_code = $self->product_code_class->new( product_code => $pc->{productCode} );
 						push @$product_codes, $product_code;
 					}
 				}
 
 				if ( grep { defined && length } $instance_elem->{blockDeviceMapping} ) {
 					foreach my $bdm ( @{$instance_elem->{blockDeviceMapping}{item}} ) {
-						my $ebs_block_device_mapping = Net::Amazon::EC2::EbsInstanceBlockDeviceMapping->new(
+						my $ebs_block_device_mapping = $self->ebs_instance_block_device_mapping_class->new(
 							volume_id				=> $bdm->{ebs}{volumeId},
 							status					=> $bdm->{ebs}{status},
 							attach_time				=> $bdm->{ebs}{attachTime},
 							delete_on_termination	=> $bdm->{ebs}{deleteOnTermination},							
 						);
 						
-						my $block_device_mapping = Net::Amazon::EC2::BlockDeviceMapping->new(
+						my $block_device_mapping = $self->block_device_mapping_class->new(
 							ebs						=> $ebs_block_device_mapping,
 							device_name				=> $bdm->{deviceName},
 						);
@@ -1804,7 +1764,7 @@ sub describe_instances {
 				}
 
 				if ( grep { defined && length } $instance_elem->{stateReason} ) {
-					$state_reason = Net::Amazon::EC2::StateReason->new(
+					$state_reason = $self->state_reason_class->new(
 						code	=> $instance_elem->{stateReason}{code},
 						message	=> $instance_elem->{stateReason}{message},
 					);
@@ -1826,21 +1786,21 @@ sub describe_instances {
 					$instance_elem->{placement}{availabilityZone} = undef;
 				}
 				
-				my $placement_response = Net::Amazon::EC2::PlacementResponse->new( availability_zone => $instance_elem->{placement}{availabilityZone} );
+				my $placement_response = $self->placement_response_class->new( availability_zone => $instance_elem->{placement}{availabilityZone} );
 
 				my $tag_sets;
 				foreach my $tag_arr (@{$instance_elem->{tagSet}{item}}) {
                     if ( ref $tag_arr->{value} eq "HASH" ) {
                         $tag_arr->{value} = "";
                     }
-					my $tag = Net::Amazon::EC2::TagSet->new(
+					my $tag = $self->tag_set_class->new(
 						key => $tag_arr->{key},
 						value => $tag_arr->{value},
 					);
 					push @$tag_sets, $tag;
 				}
 
-				my $running_instance = Net::Amazon::EC2::RunningInstances->new(
+				my $running_instance = $self->running_instances_class->new(
 					ami_launch_index		=> $instance_elem->{amiLaunchIndex},
 					dns_name				=> $instance_elem->{dnsName},
 					image_id				=> $instance_elem->{imageId},
@@ -1875,7 +1835,7 @@ sub describe_instances {
 				push @$running_instances, $running_instance;
 			}
 						
-			my $reservation = Net::Amazon::EC2::ReservationInfo->new(
+			my $reservation = $self->reservation_info_class->new(
 				reservation_id	=> $reservation_set->{reservationId},
 				owner_id		=> $reservation_set->{ownerId},
 				group_set		=> $group_sets,
@@ -1949,43 +1909,43 @@ sub describe_instance_attribute {
 		# Test to see which type of attribute we are looking for, to dictacte 
 		# how to create the Net::Amazon::EC2::DescribeInstanceAttributeResponse object.
 		if ( $args{Attribute} eq 'instanceType' ) {
-			$attribute_response = Net::Amazon::EC2::DescribeInstanceAttributeResponse->new(
+			$attribute_response = $self->describe_instance_attribute_response_class->new(
 				instance_id		=> $xml->{instanceId},
 				instance_type	=> $xml->{instanceType}{value},
 			);
 		}
 		elsif ( $args{Attribute} eq 'kernel' ) {
-			$attribute_response = Net::Amazon::EC2::DescribeInstanceAttributeResponse->new(
+			$attribute_response = $self->describe_instance_attribute_response_class->new(
 				instance_id	=> $xml->{instanceId},
 				kernel		=> $xml->{kernel}{value},
 			);
 		}
 		elsif ( $args{Attribute} eq 'ramdisk' ) {
-			$attribute_response = Net::Amazon::EC2::DescribeInstanceAttributeResponse->new(
+			$attribute_response = $self->describe_instance_attribute_response_class->new(
 				instance_id	=> $xml->{instanceId},
 				ramdisk		=> $xml->{ramdisk}{value},
 			);
 		}
 		elsif ( $args{Attribute} eq 'userData' ) {
-			$attribute_response = Net::Amazon::EC2::DescribeInstanceAttributeResponse->new(
+			$attribute_response = $self->describe_instance_attribute_response_class->new(
 				instance_id	=> $xml->{instanceId},
 				user_data	=> $xml->{userData}{value},
 			);
 		}
 		elsif ( $args{Attribute} eq 'disableApiTermination' ) {
-			$attribute_response = Net::Amazon::EC2::DescribeInstanceAttributeResponse->new(
+			$attribute_response = $self->describe_instance_attribute_response_class->new(
 				instance_id				=> $xml->{instanceId},
 				disable_api_termination	=> $xml->{disableApiTermination}{value},
 			);
 		}
 		elsif ( $args{Attribute} eq 'instanceInitiatedShutdownBehavior' ) {
-			$attribute_response = Net::Amazon::EC2::DescribeInstanceAttributeResponse->new(
+			$attribute_response = $self->describe_instance_attribute_response_class->new(
 				instance_id								=> $xml->{instanceId},
 				instance_initiated_shutdown_behavior	=> $xml->{instanceInitiatedShutdownBehavior}{value},
 			);
 		}
 		elsif ( $args{Attribute} eq 'rootDeviceName' ) {
-			$attribute_response = Net::Amazon::EC2::DescribeInstanceAttributeResponse->new(
+			$attribute_response = $self->describe_instance_attribute_response_class->new(
 				instance_id			=> $xml->{instanceId},
 				root_device_name	=> $xml->{rootDeviceName}{value},
 			);
@@ -1993,13 +1953,13 @@ sub describe_instance_attribute {
 		elsif ( $args{Attribute} eq 'blockDeviceMapping' ) {
 			my $block_mappings;
 			foreach my $block_item (@{$xml->{blockDeviceMapping}{item}}) {
-				my $ebs_mapping				= Net::Amazon::EC2::EbsInstanceBlockDeviceMapping->new(
+				my $ebs_mapping				= $self->ebs_instance_block_device_mapping_class->new(
 					attach_time				=> $block_item->{ebs}{attachTime},
 					delete_on_termination	=> $block_item->{ebs}{deleteOnTermination},
 					status					=> $block_item->{ebs}{status},
 					volume_id				=> $block_item->{ebs}{volumeId},
 				);
-				my $block_device_mapping	= Net::Amazon::EC2::BlockDeviceMapping->new(
+				my $block_device_mapping	= $self->block_device_mapping_class->new(
 					device_name	=> $block_item->{deviceName},
 					ebs			=> $ebs_mapping,
 				);
@@ -2008,7 +1968,7 @@ sub describe_instance_attribute {
 			}
 
 			warn Dumper($block_mappings);
-			$attribute_response = Net::Amazon::EC2::DescribeInstanceAttributeResponse->new(
+			$attribute_response = $self->describe_instance_attribute_response_class->new(
 				instance_id				=> $xml->{instanceId},
 				block_device_mapping	=> $block_mappings,
 			);
@@ -2060,7 +2020,7 @@ sub describe_key_pairs {
 		my $key_pairs;
 
 		foreach my $pair (@{$xml->{keySet}{item}}) {
-			my $key_pair = Net::Amazon::EC2::DescribeKeyPairsResponse->new(
+			my $key_pair = $self->describe_key_pairs_response_class->new(
 				key_name		=> $pair->{keyName},
 				key_fingerprint	=> $pair->{keyFingerprint},
 			);
@@ -2113,7 +2073,7 @@ sub describe_regions {
  		my $regions;
 
  		foreach my $region_item (@{$xml->{regionInfo}{item}}) {
- 			my $region = Net::Amazon::EC2::Region->new(
+ 			my $region = $self->region_class->new(
  				region_name			=> $region_item->{regionName},
  				region_endpoint		=> $region_item->{regionEndpoint},
  			);
@@ -2166,7 +2126,7 @@ sub describe_reserved_instances {
  		my $reserved_instances;
 
  		foreach my $reserved_instance_item (@{$xml->{reservedInstancesSet}{item}}) {
- 			my $reserved_instance = Net::Amazon::EC2::ReservedInstance->new(
+ 			my $reserved_instance = $self->reserved_instance_class->new(
 				reserved_instances_id	=> $reserved_instance_item->{reservedInstancesId},
 				instance_type			=> $reserved_instance_item->{instanceType},
 				availability_zone		=> $reserved_instance_item->{availabilityZone},
@@ -2234,7 +2194,7 @@ sub describe_reserved_instances_offerings {
  		my $reserved_instance_offerings;
 
  		foreach my $reserved_instance_offering_item (@{$xml->{reservedInstancesOfferingsSet}{item}}) {
- 			my $reserved_instance_offering = Net::Amazon::EC2::ReservedInstanceOffering->new(
+ 			my $reserved_instance_offering = $self->reserved_instance_offering_class->new(
 				reserved_instances_offering_id	=> $reserved_instance_offering_item->{reservedInstancesOfferingId},
 				instance_type					=> $reserved_instance_offering_item->{instanceType},
 				availability_zone				=> $reserved_instance_offering_item->{availabilityZone},
@@ -2309,7 +2269,7 @@ sub describe_security_groups {
 				
 				if (grep { defined && length } $ip_perm->{groups}{item}) {
 					foreach my $grp (@{$ip_perm->{groups}{item}}) {
-						my $group = Net::Amazon::EC2::UserIdGroupPair->new(
+						my $group = $self->user_id_group_pair_class->new(
 							user_id		=> $grp->{userId},
 							group_name	=> $grp->{groupName},
 						);
@@ -2320,7 +2280,7 @@ sub describe_security_groups {
 				
 				if (grep { defined && length } $ip_perm->{ipRanges}{item}) {
 					foreach my $rng (@{$ip_perm->{ipRanges}{item}}) {
-						my $ip_range = Net::Amazon::EC2::IpRange->new(
+						my $ip_range = $self->ip_range_class->new(
 							cidr_ip => $rng->{cidrIp},
 						);
 						
@@ -2329,7 +2289,7 @@ sub describe_security_groups {
 				}
 
 								
-				my $ip_permission = Net::Amazon::EC2::IpPermission->new(
+				my $ip_permission = $self->ip_permission_class->new(
 					ip_protocol			=> $ip_protocol,
 					group_name			=> $group_name,
 					group_description	=> $group_description,
@@ -2349,7 +2309,7 @@ sub describe_security_groups {
 				push @$ip_permissions, $ip_permission;
 			}
 			
-			my $security_group = Net::Amazon::EC2::SecurityGroup->new(
+			my $security_group = $self->security_group_class->new(
 				owner_id			=> $owner_id,
 				group_name			=> $group_name,
 				group_description	=> $group_description,
@@ -2414,7 +2374,7 @@ sub describe_snapshot_attribute {
 		}
 
  		foreach my $perm_item (@{$xml->{createVolumePermission}{item}}) {
- 			my $perm = Net::Amazon::EC2::CreateVolumePermission->new(
+ 			my $perm = $self->create_volume_permission_class->new(
  				user_id			=> $perm_item->{userId},
  				group			=> $perm_item->{group},
  			);
@@ -2422,7 +2382,7 @@ sub describe_snapshot_attribute {
  			push @$perms, $perm;
  		}
 
-		my $snapshot_attribute = Net::Amazon::EC2::SnapshotAttribute->new(
+		my $snapshot_attribute = $self->snapshot_attribute_class->new(
 			snapshot_id		=> $xml->{snapshotId},
 			permissions		=> $perms,
 		);
@@ -2492,7 +2452,7 @@ sub describe_snapshots {
 				$snap->{progress} = undef;
 			}
 
- 			my $snapshot = Net::Amazon::EC2::Snapshot->new(
+ 			my $snapshot = $self->snapshot_class->new(
  				snapshot_id		=> $snap->{snapshotId},
  				status			=> $snap->{status},
  				volume_id		=> $snap->{volumeId},
@@ -2560,7 +2520,7 @@ sub describe_volumes {
 			}
 		
 			foreach my $attachment_set (@{$volume_set->{attachmentSet}{item}}) {
- 				my $attachment = Net::Amazon::EC2::Attachment->new(
+ 				my $attachment = $self->attachment_class->new(
  					volume_id				=> $attachment_set->{volumeId},
  					status					=> $attachment_set->{status},
  					instance_id				=> $attachment_set->{instanceId},
@@ -2577,14 +2537,14 @@ sub describe_volumes {
 				if ( ref $tag_arr->{value} eq "HASH" ) {
 					$tag_arr->{value} = "";
 				}
-				my $tag = Net::Amazon::EC2::TagSet->new(
+				my $tag = $self->tag_set_class->new(
 					key => $tag_arr->{key},
 					value => $tag_arr->{value},
 				);
 				push @$tags, $tag;
 			}
 
-			my $volume = Net::Amazon::EC2::Volume->new(
+			my $volume = $self->volume_class->new(
 				volume_id		=> $volume_set->{volumeId},
 				status			=> $volume_set->{status},
 				zone			=> $volume_set->{availabilityZone},
@@ -2657,7 +2617,7 @@ sub describe_tags {
 		my $tags;
 
 		foreach my $pair (@{$xml->{tagSet}{item}}) {
-			my $tag = Net::Amazon::EC2::DescribeTags->new(
+			my $tag = $self->describe_tags_class->new(
 				resource_id		=> $pair->{resourceId},
 				resource_type	=> $pair->{resourceType},
 				key				=> $pair->{key},
@@ -2720,7 +2680,7 @@ sub detach_volume {
 		return $self->_parse_errors($xml);
 	}
 	else {
-		my $attachment = Net::Amazon::EC2::Attachment->new(
+		my $attachment = $self->attachment_class->new(
 			volume_id	=> $xml->{volumeId},
 			status		=> $xml->{status},
 			instance_id	=> $xml->{instanceId},
@@ -2798,7 +2758,7 @@ sub get_console_output {
 		return $self->_parse_errors($xml);
 	}
 	else {
-		my $console_output = Net::Amazon::EC2::ConsoleOutput->new(
+		my $console_output = $self->console_output_class->new(
 			instance_id	=> $xml->{instanceId},
 			timestamp	=> $xml->{timestamp},
 			output		=> decode_base64($xml->{output}),
@@ -2836,7 +2796,7 @@ sub get_password_data {
 		return $self->_parse_errors($xml);
 	}
 	else {
-		my $instance_password = Net::Amazon::EC2::InstancePassword->new(
+		my $instance_password = $self->instance_password_class->new(
 			instance_id		=> $xml->{instanceId},
 			timestamp		=> $xml->{timestamp},
 			password_data	=> $xml->{passwordData},
@@ -3098,7 +3058,7 @@ sub monitor_instances {
  		my $monitored_instances;
 
  		foreach my $monitored_instance_item (@{$xml->{instancesSet}{item}}) {
- 			my $monitored_instance = Net::Amazon::EC2::ReservedInstance->new(
+ 			my $monitored_instance = $self->reserved_instance_class->new(
 				instance_id	=> $monitored_instance_item->{instanceId},
 				state		=> $monitored_instance_item->{monitoring}{state},
  			);
@@ -3821,7 +3781,7 @@ sub run_instances {
 	else {
 		my $group_sets=[];
 		foreach my $group_arr (@{$xml->{groupSet}{item}}) {
-			my $group = Net::Amazon::EC2::GroupSet->new(
+			my $group = $self->group_set_class->new(
 				group_id => $group_arr->{groupId},
 				group_name => $group_arr->{groupName},
 			);
@@ -3830,7 +3790,7 @@ sub run_instances {
 
 		my $running_instances;
 		foreach my $instance_elem (@{$xml->{instancesSet}{item}}) {
-			my $instance_state_type = Net::Amazon::EC2::InstanceState->new(
+			my $instance_state_type = $self->instance_state_class->new(
 				code	=> $instance_elem->{instanceState}{code},
 				name	=> $instance_elem->{instanceState}{name},
 			);
@@ -3841,7 +3801,7 @@ sub run_instances {
 			
 			if (grep { defined && length } $instance_elem->{productCodes} ) {
 				foreach my $pc (@{$instance_elem->{productCodes}{item}}) {
-					my $product_code = Net::Amazon::EC2::ProductCode->new( product_code => $pc->{productCode} );
+					my $product_code = $self->product_code_class->new( product_code => $pc->{productCode} );
 					push @$product_codes, $product_code;
 				}
 			}
@@ -3859,7 +3819,7 @@ sub run_instances {
 			}
 
 			if ( grep { defined && length } $instance_elem->{stateReason} ) {
-				$state_reason = Net::Amazon::EC2::StateReason->new(
+				$state_reason = $self->state_reason_class->new(
 					code	=> $instance_elem->{stateReason}{code},
 					message	=> $instance_elem->{stateReason}{message},
 				);
@@ -3867,14 +3827,14 @@ sub run_instances {
 
 			if ( grep { defined && length } $instance_elem->{blockDeviceMapping} ) {
 				foreach my $bdm ( @{$instance_elem->{blockDeviceMapping}{item}} ) {
-					my $ebs_block_device_mapping = Net::Amazon::EC2::EbsInstanceBlockDeviceMapping->new(
+					my $ebs_block_device_mapping = $self->ebs_instance_block_device_mapping_class->new(
 						volume_id				=> $bdm->{ebs}{volumeId},
 						status					=> $bdm->{ebs}{status},
 						attach_time				=> $bdm->{ebs}{attachTime},
 						delete_on_termination	=> $bdm->{ebs}{deleteOnTermination},							
 					);
 					
-					my $block_device_mapping = Net::Amazon::EC2::BlockDeviceMapping->new(
+					my $block_device_mapping = $self->block_device_mapping_class->new(
 						ebs						=> $ebs_block_device_mapping,
 						device_name				=> $bdm->{deviceName},
 					);
@@ -3882,9 +3842,9 @@ sub run_instances {
 				}
 			}
 
-			my $placement_response = Net::Amazon::EC2::PlacementResponse->new( availability_zone => $instance_elem->{placement}{availabilityZone} );
+			my $placement_response = $self->placement_response_class->new( availability_zone => $instance_elem->{placement}{availabilityZone} );
 			
-			my $running_instance = Net::Amazon::EC2::RunningInstances->new(
+			my $running_instance = $self->running_instances_class->new(
 				ami_launch_index		=> $instance_elem->{amiLaunchIndex},
 				dns_name				=> $instance_elem->{dnsName},
 				image_id				=> $instance_elem->{imageId},
@@ -3918,7 +3878,7 @@ sub run_instances {
 			push @$running_instances, $running_instance;
 		}
 		
-		my $reservation = Net::Amazon::EC2::ReservationInfo->new(
+		my $reservation = $self->reservation_info_class->new(
 			reservation_id	=> $xml->{reservationId},
 			owner_id		=> $xml->{ownerId},
 			group_set		=> $group_sets,
@@ -3969,17 +3929,17 @@ sub start_instances {
 		my $started_instances;
 		
 		foreach my $inst (@{$xml->{instancesSet}{item}}) {
-			my $previous_state = Net::Amazon::EC2::InstanceState->new(
+			my $previous_state = $self->instance_state_class->new(
 				code	=> $inst->{previousState}{code},
 				name	=> $inst->{previousState}{name},
 			);
 			
-			my $current_state = Net::Amazon::EC2::InstanceState->new(
+			my $current_state = $self->instance_state_class->new(
 				code	=> $inst->{currentState}{code},
 				name	=> $inst->{currentState}{name},
 			);
 
-			my $started_instance = Net::Amazon::EC2::InstanceStateChange->new(
+			my $started_instance = $self->instance_state_change_class->new(
 				instance_id		=> $inst->{instanceId},
 				previous_state	=> $previous_state,
 				current_state	=> $current_state,
@@ -4041,17 +4001,17 @@ sub stop_instances {
 		my $stopped_instances;
 		
 		foreach my $inst (@{$xml->{instancesSet}{item}}) {
-			my $previous_state = Net::Amazon::EC2::InstanceState->new(
+			my $previous_state = $self->instance_state_class->new(
 				code	=> $inst->{previousState}{code},
 				name	=> $inst->{previousState}{name},
 			);
 			
-			my $current_state = Net::Amazon::EC2::InstanceState->new(
+			my $current_state = $self->instance_state_class->new(
 				code	=> $inst->{currentState}{code},
 				name	=> $inst->{currentState}{name},
 			);
 
-			my $stopped_instance = Net::Amazon::EC2::InstanceStateChange->new(
+			my $stopped_instance = $self->instance_state_change_class->new(
 				instance_id		=> $inst->{instanceId},
 				previous_state	=> $previous_state,
 				current_state	=> $current_state,
@@ -4104,12 +4064,12 @@ sub terminate_instances {
 		my $terminated_instances;
 		
 		foreach my $inst (@{$xml->{instancesSet}{item}}) {
-			my $previous_state = Net::Amazon::EC2::InstanceState->new(
+			my $previous_state = $self->instance_state_class->new(
 				code	=> $inst->{previousState}{code},
 				name	=> $inst->{previousState}{name},
 			);
 			
-			my $current_state = Net::Amazon::EC2::InstanceState->new(
+			my $current_state = $self->instance_state_class->new(
 				code	=> $inst->{currentState}{code},
 				name	=> $inst->{currentState}{name},
 			);
@@ -4118,7 +4078,7 @@ sub terminate_instances {
 			# return class for this.  I hate to do it but I need to be consistent with this
 			# now being a instance stage change object.  This used to be a 
 			# Net::Amazon::EC2::TerminateInstancesResponse object.
-			my $terminated_instance = Net::Amazon::EC2::InstanceStateChange->new(
+			my $terminated_instance = $self->instance_state_change_class->new(
 				instance_id		=> $inst->{instanceId},
 				previous_state	=> $previous_state,
 				current_state	=> $current_state,
@@ -4172,7 +4132,7 @@ sub unmonitor_instances {
  		my $monitored_instances;
 
  		foreach my $monitored_instance_item (@{$xml->{instancesSet}{item}}) {
- 			my $monitored_instance = Net::Amazon::EC2::ReservedInstance->new(
+ 			my $monitored_instance = $self->reserved_instance_class->new(
 				instance_id	=> $monitored_instance_item->{instanceId},
 				state		=> $monitored_instance_item->{monitoring}{state},
  			);
@@ -4188,6 +4148,140 @@ no Moose;
 1;
 
 __END__
+
+=head1 RELATED CLASSES
+
+We provide a number of accessors that return the name of an associated class, so
+that people extending this package may easily extend the associated classes by
+overriding or otherwise modifying these methods.
+
+In general, three attributes are created for each of the classes below.  Two
+you can specify in the constructor:
+
+    ${class_name}_class
+    ${class_name}_traits
+
+Note that the *_class attribute must be of a class that isa() the base related
+class; and that *_traits must be roles.  At runtime, calling the *_class
+accessor will give either the base class (if no traits are specified) or an
+anonymous class descending from the base class and composed with the traits
+specified.
+
+For instance, one related class is L<Net::Amazon::EC2::AvailabilityZone>.  We will
+have these attributes:
+
+    availability_zone_class
+    availability_zone_traits
+    original_availability_zone_class
+
+Let's say you call new like:
+
+    my $ec2 = Net::Amazon::EC2->new(
+        availability_zone_traits => [ 'My::Trait' ],
+    );
+
+When you need the availability_zone class we should be using, all that needs
+to be done is:
+
+    my $z = $ec2->availability_zone_class->new(....);
+
+And the anonymous class will be properly constructed.
+
+See L<MooseX::RelatedClasses> for more information.
+
+=over 4
+
+=item attachment_class => Net::Amazon::EC2::Attachment
+
+=item availability_zone_class => Net::Amazon::EC2::AvailabilityZone
+
+=item availability_zone_message_class => Net::Amazon::EC2::AvailabilityZoneMessage
+
+=item block_device_mapping_class => Net::Amazon::EC2::BlockDeviceMapping
+
+=item bundle_instance_response_class => Net::Amazon::EC2::BundleInstanceResponse
+
+=item confirm_product_instance_response_class => Net::Amazon::EC2::ConfirmProductInstanceResponse
+
+=item console_output_class => Net::Amazon::EC2::ConsoleOutput
+
+=item create_volume_permission_class => Net::Amazon::EC2::CreateVolumePermission
+
+=item describe_address_class => Net::Amazon::EC2::DescribeAddress
+
+=item describe_image_attribute_class => Net::Amazon::EC2::DescribeImageAttribute
+
+=item describe_images_response_class => Net::Amazon::EC2::DescribeImagesResponse
+
+=item describe_instance_attribute_response_class => Net::Amazon::EC2::DescribeInstanceAttributeResponse
+
+=item describe_key_pairs_response_class => Net::Amazon::EC2::DescribeKeyPairsResponse
+
+=item describe_tags_class => Net::Amazon::EC2::DescribeTags
+
+=item ebs_block_device_class => Net::Amazon::EC2::EbsBlockDevice
+
+=item ebs_instance_block_device_mapping_class => Net::Amazon::EC2::EbsInstanceBlockDeviceMapping
+
+=item error_class => Net::Amazon::EC2::Error
+
+=item errors_class => Net::Amazon::EC2::Errors
+
+=item group_set_class => Net::Amazon::EC2::GroupSet
+
+=item instance_block_device_mapping_class => Net::Amazon::EC2::InstanceBlockDeviceMapping
+
+=item instance_password_class => Net::Amazon::EC2::InstancePassword
+
+=item instance_state_class => Net::Amazon::EC2::InstanceState
+
+=item instance_state_change_class => Net::Amazon::EC2::InstanceStateChange
+
+=item ip_permission_class => Net::Amazon::EC2::IpPermission
+
+=item ip_range_class => Net::Amazon::EC2::IpRange
+
+=item key_pair_class => Net::Amazon::EC2::KeyPair
+
+=item launch_permission_class => Net::Amazon::EC2::LaunchPermission
+
+=item launch_permission_operation_class => Net::Amazon::EC2::LaunchPermissionOperation
+
+=item monitored_instance_class => Net::Amazon::EC2::MonitoredInstance
+
+=item placement_response_class => Net::Amazon::EC2::PlacementResponse
+
+=item product_code_class => Net::Amazon::EC2::ProductCode
+
+=item product_instance_response_class => Net::Amazon::EC2::ProductInstanceResponse
+
+=item region_class => Net::Amazon::EC2::Region
+
+=item reservation_info_class => Net::Amazon::EC2::ReservationInfo
+
+=item reserved_instance_class => Net::Amazon::EC2::ReservedInstance
+
+=item reserved_instance_offering_class => Net::Amazon::EC2::ReservedInstanceOffering
+
+=item running_instances_class => Net::Amazon::EC2::RunningInstances
+
+=item security_group_class => Net::Amazon::EC2::SecurityGroup
+
+=item snapshot_class => Net::Amazon::EC2::Snapshot
+
+=item snapshot_attribute_class => Net::Amazon::EC2::SnapshotAttribute
+
+=item state_reason_class => Net::Amazon::EC2::StateReason
+
+=item tag_set_class => Net::Amazon::EC2::TagSet
+
+=item user_data_class => Net::Amazon::EC2::UserData
+
+=item user_id_group_pair_class => Net::Amazon::EC2::UserIdGroupPair
+
+=item volume_class => Net::Amazon::EC2::Volume
+
+=back
 
 =head1 TESTING
 
