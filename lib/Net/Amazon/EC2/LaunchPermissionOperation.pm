@@ -39,4 +39,4 @@ under the same terms as Perl itself.
 
 =cut
 
-no Moose;
+1;
