@@ -1,6 +1,6 @@
 package Net::Amazon::EC2;
 use Moo;
-use MooX::Types::MooseLike::Base;
+use MooX::Types::MooseLike::Base qw(Str Int Bool);
 
 use strict;
 use vars qw($VERSION);
