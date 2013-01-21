@@ -3562,6 +3562,10 @@ The keypair name to associate this instance with.  If omitted, will use your def
 
 An scalar or array ref. Will associate this instance with the group names passed in.  If omitted, will be associated with the default security group.
 
+=item SecurityGroupId (optional)
+
+An scalar or array ref. Will associate this instance with the group ids passed in.  If omitted, will be associated with the default security group.
+
 =item AdditionalInfo (optional)
 
 Specifies additional information to make available to the instance(s).
@@ -3678,6 +3682,10 @@ Specifies the idempotent instance id.
 
 Whether the instance is optimized for EBS I/O.
 
+=item PrivateIpAddress (optional)
+
+Specifies the private IP address to use when launching an Amazon VPC instance.
+
 =back
 
 Returns a Net::Amazon::EC2::ReservationInfo object
@@ -3692,6 +3700,7 @@ sub run_instances {
 		MaxCount										=> { type => SCALAR },
 		KeyName											=> { type => SCALAR, optional => 1 },
 		SecurityGroup									=> { type => SCALAR | ARRAYREF, optional => 1 },
+		SecurityGroupId									=> { type => SCALAR | ARRAYREF, optional => 1 },
 		AdditionalInfo									=> { type => SCALAR, optional => 1 },
 		UserData										=> { type => SCALAR, optional => 1 },
 		InstanceType									=> { type => SCALAR, optional => 1 },
@@ -3710,7 +3719,8 @@ sub run_instances {
 		DisableApiTermination							=> { type => SCALAR, optional => 1 },
 		InstanceInitiatedShutdownBehavior				=> { type => SCALAR, optional => 1 },
 		ClientToken										=> { type => SCALAR, optional => 1 },
-		EbsOptimized										=> { type => SCALAR, optional => 1 },
+		EbsOptimized									=> { type => SCALAR, optional => 1 },
+		PrivateIpAddress								=> { type => SCALAR, optional => 1 },
 	});
 	
 	# If we have a array ref of instances lets split them out into their SecurityGroup.n format
@@ -3719,6 +3729,16 @@ sub run_instances {
 		my $count			= 1;
 		foreach my $security_group (@{$security_groups}) {
 			$args{"SecurityGroup." . $count} = $security_group;
+			$count++;
+		}
+	}
+
+	# If we have a array ref of instances lets split them out into their SecurityGroupId.n format
+	if (ref ($args{SecurityGroupId}) eq 'ARRAY') {
+		my $security_groups	= delete $args{SecurityGroupId};
+		my $count			= 1;
+		foreach my $security_group (@{$security_groups}) {
+			$args{"SecurityGroupId." . $count} = $security_group;
 			$count++;
 		}
 	}
