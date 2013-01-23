@@ -3741,6 +3741,7 @@ sub run_instances {
 		KeyName											=> { type => SCALAR, optional => 1 },
 		SecurityGroup									=> { type => SCALAR | ARRAYREF, optional => 1 },
 		SecurityGroupId									=> { type => SCALAR | ARRAYREF, optional => 1 },
+		AddressingType									=> { type => SCALAR, optional => 1 },
 		AdditionalInfo									=> { type => SCALAR, optional => 1 },
 		UserData										=> { type => SCALAR, optional => 1 },
 		InstanceType									=> { type => SCALAR, optional => 1 },
