@@ -11,10 +11,13 @@ use Digest::SHA qw(hmac_sha256);
 use URI;
 use MIME::Base64 qw(encode_base64 decode_base64);
 use POSIX qw(strftime);
-use Params::Validate qw(validate SCALAR ARRAYREF HASHREF);
+use Params::Validate qw(validate SCALAR ARRAYREF HASHREF CODEREF);
 use Data::Dumper qw(Dumper);
 use URI::Escape qw(uri_escape_utf8);
 use Carp;
+use AnyEvent;
+use AnyEvent::HTTP;
+use List::Pairwise qw/mapp/;
 
 use Net::Amazon::EC2::DescribeImagesResponse;
 use Net::Amazon::EC2::DescribeKeyPairsResponse;
@@ -62,7 +65,7 @@ use Net::Amazon::EC2::EbsBlockDevice;
 use Net::Amazon::EC2::TagSet;
 use Net::Amazon::EC2::DescribeTags;
 
-$VERSION = '0.23';
+$VERSION = '0.24';
 
 =head1 NAME
 
@@ -164,9 +167,9 @@ has 'version'			=> ( is => 'ro', isa => 'Str', required => 1, default => '2012-0
 has 'region'			=> ( is => 'ro', isa => 'Str', required => 1, default => 'us-east-1' );
 has 'ssl'				=> ( is => 'ro', isa => 'Bool', required => 1, default => 1 );
 has 'return_errors'     => ( is => 'ro', isa => 'Bool', default => 0 );
-has 'base_url'			=> ( 
-	is			=> 'ro', 
-	isa			=> 'Str', 
+has 'base_url'			=> (
+	is			=> 'ro',
+	isa			=> 'Str',
 	required	=> 1,
 	lazy		=> 1,
 	default		=> sub {
@@ -177,11 +180,26 @@ has 'base_url'			=> (
 sub timestamp {
     return strftime("%Y-%m-%dT%H:%M:%SZ",gmtime);
 }
-    
+
 sub _sign {
+	my $self = shift;
+
+	# Setup return value for completion closure
+	my $ret;
+	my $finished_condvar = $self->_sign_async(@_,
+											CallBack => sub { $ret = $_[0] });
+
+	# wait for signal that processing is complete
+	$finished_condvar->recv();
+
+	return $ret;
+}
+
+sub _sign_async {
 	my $self						= shift;
 	my %args						= @_;
 	my $action						= delete $args{Action};
+	my $cb							= delete $args{CallBack};
 	my %sign_hash					= %args;
 	my $timestamp					= $self->timestamp;
 
@@ -219,12 +237,33 @@ sub _sign {
 		Signature			=> $encoded,
 		%args
 	);
-	
+
 	my $ur	= $uri->as_string();
 	$self->_debug("GENERATED QUERY URL: $ur");
-	my $ua	= LWP::UserAgent->new();
-    $ua->env_proxy;
-	my $res	= $ua->post($ur, \%params);
+
+	# Temporary URI to generate query data
+	my $url = URI->new('http:');
+	$url->query_form(%params);
+
+	$self->_debug("QUERY POST PARAMETERS: " . $url->query());
+
+	my $finished_condvar = AnyEvent->condvar();
+
+	http_post($ur, $url->query(), headers => {
+		'Content-Type' => 'application/x-www-form-urlencoded',
+	}, sub {
+		my ($body, $hdr) = @_;
+		my $xml = $self->_sign_phase_2($body, $hdr);
+		$cb->($xml);
+		$finished_condvar->send();
+	});
+
+	return $finished_condvar;
+}
+
+sub _sign_phase_2 {
+	my ($self, $body, $hdr) = @_;
+
 	# We should force <item> elements to be in an array
 	my $xs	= XML::Simple->new(
         ForceArray => qr/(?:item|Errors)/i, # Always want item elements unpacked to arrays
@@ -232,10 +271,10 @@ sub _sign {
         SuppressEmpty => undef,             # Turn empty values into explicit undefs
     );
 	my $xml;
-	
+
 	# Check the result for connectivity problems, if so throw an error
- 	if ($res->code >= 500) {
- 		my $message = $res->status_line;
+	if ($hdr->{Status} >= 500) {
+		my $message = $hdr->{Reason};
 		$xml = <<EOXML;
 <xml>
 	<RequestID>N/A</RequestID>
@@ -248,9 +287,9 @@ sub _sign {
 </xml>
 EOXML
 
- 	}
+	}
 	else {
-		$xml = $res->content();
+		$xml = $body;
 	}
 
 	my $ref = $xs->XMLin($xml);
@@ -262,7 +301,7 @@ EOXML
 sub _parse_errors {
 	my $self		= shift;
 	my $errors_xml	= shift;
-	
+
 	my $es;
 	my $request_id = $errors_xml->{RequestID};
 
@@ -271,10 +310,10 @@ sub _parse_errors {
 			code	=> $e->{Error}{Code},
 			message	=> $e->{Error}{Message},
 		);
-		
+
 		push @$es, $error;
 	}
-	
+
 	my $errors = Net::Amazon::EC2::Errors->new(
 		request_id	=> $request_id,
 		errors		=> $es,
@@ -300,7 +339,7 @@ sub _parse_errors {
 sub _debug {
 	my $self	= shift;
 	my $message	= shift;
-	
+
 	if ((grep { defined && length} $self->debug) && $self->debug == 1) {
 		print "$message\n\n\n\n";
 	}
@@ -310,7 +349,7 @@ sub _debug {
 sub _hashit {
 	my $self								= shift;
 	my ($secret_access_key, $query_string)	= @_;
-	
+
 	return encode_base64(hmac_sha256($query_string, $secret_access_key), '');
 }
 
@@ -342,8 +381,24 @@ Returns the IP address obtained.
 
 sub allocate_address {
 	my $self = shift;
+	my %args = validate( @_, {
+		CallBack	=> { type => CODEREF, optional => 1 },
+	});
 
-	my $xml = $self->_sign(Action  => 'AllocateAddress');
+	my $CallBack = $args{CallBack};
+	if ($CallBack) {
+		return $self->_sign_async(Action => 'AllocateAddress', CallBack => sub {
+			my $xml = shift;
+			$CallBack->($self->_allocate_address($xml));
+		});
+	}
+
+	my $xml = $self->_sign(Action  => 'AllocateAddress', %args);
+	return $self->_allocate_address($xml);
+}
+
+sub _allocate_address {
+	my ($self, $xml) = @_;
 
 	if ( grep { defined && length } $xml->{Errors} ) {
 		return $self->_parse_errors($xml);
@@ -371,6 +426,15 @@ The IP address to associate with
 
 The allocation id if IP will be assigned in a virtual private cloud.
 
+=item CallBack (optional)
+
+The coderef which will be called when the HTTP request to EC2 has completed.
+This coderef should accept one parameter, the regular return value of this
+function in synchronous mode.
+
+If this callback is supplied instead of returning an array ref N:A:E:R objects
+it will return an AnyEvent condvar which can be waited upon for completion.
+
 =back
 
 Returns true if the association succeeded.
@@ -381,11 +445,26 @@ sub associate_address {
 	my $self = shift;
 	my %args = validate( @_, {
 		InstanceId		=> { type => SCALAR },
-		PublicIp 		=> { type => SCALAR, optional => 1 },
-		AllocationId		=> { type => SCALAR, optional => 1 },
+		PublicIp		=> { type => SCALAR, optional => 1 },
+		AllocationId	=> { type => SCALAR, optional => 1 },
+		CallBack		=> { type => CODEREF, optional => 1 },
 	});
-	
+
+	my $CallBack = $args{CallBack};
+	if ($CallBack) {
+		return $self->_sign_async(Action => 'AssociateAddress', %args,
+				CallBack => sub {
+			my $xml = shift;
+			$CallBack->($self->_associate_address($xml));
+		});
+	}
+
 	my $xml = $self->_sign(Action  => 'AssociateAddress', %args);
+	return $self->_associate_address($xml);
+}
+
+sub _associate_address {
+	my ($self, $xml) = @_;
 
 	if ( grep { defined && length } $xml->{Errors} ) {
 		return $self->_parse_errors($xml);
@@ -418,6 +497,15 @@ The instance id you wish to attach the volume to.
 
 The device id you want the volume attached as.
 
+=item CallBack (optional)
+
+The coderef which will be called when the HTTP request to EC2 has completed.
+This coderef should accept one parameter, the regular return value of this
+function in synchronous mode.
+
+If this callback is supplied instead of returning an array ref N:A:E:R objects
+it will return an AnyEvent condvar which can be waited upon for completion.
+
 =back
 
 Returns a Net::Amazon::EC2::Attachment object containing the resulting volume status.
@@ -430,10 +518,25 @@ sub attach_volume {
 		VolumeId	=> { type => SCALAR },
 		InstanceId	=> { type => SCALAR },
 		Device		=> { type => SCALAR },
+		CallBack	=> { type => CODEREF, optional => 1 },
 	});
 
+	my $CallBack = $args{CallBack};
+	if ($CallBack) {
+		return $self->_sign_async(Action => 'AttachVolume', %args,
+				CallBack => sub {
+			my $xml = shift;
+			$CallBack->($self->_attach_volume($xml));
+		});
+	}
+
 	my $xml = $self->_sign(Action  => 'AttachVolume', %args);
-	
+	return $self->_attach_volume($xml);
+}
+
+sub _attach_volume {
+	my ($self, $xml) = @_;
+
 	if ( grep { defined && length } $xml->{Errors} ) {
 		return $self->_parse_errors($xml);
 	}
@@ -445,7 +548,7 @@ sub attach_volume {
 			attach_time	=> $xml->{attachTime},
 			device		=> $xml->{device},
 		);
-		
+
 		return $attachment;
 	}
 }
@@ -484,6 +587,15 @@ End of port range to add access for.
 
 The CIDR IP space we are adding access for.
 
+=item CallBack (optional)
+
+The coderef which will be called when the HTTP request to EC2 has completed.
+This coderef should accept one parameter, the regular return value of this
+function in synchronous mode.
+
+If this callback is supplied instead of returning an array ref N:A:E:R objects
+it will return an AnyEvent condvar which can be waited upon for completion.
+
 =back
 
 Adding a rule can be done in two ways: adding a source group name + source group owner id, or, 
@@ -497,25 +609,42 @@ sub authorize_security_group_ingress {
 	my $self = shift;
 	my %args = validate( @_, {
 		GroupName					=> { type => SCALAR },
-		SourceSecurityGroupName 	=> { 
+		SourceSecurityGroupName		=> {
 			type => SCALAR,
 			depends => ['SourceSecurityGroupOwnerId'],
 			optional => 1 ,
 		},
 		SourceSecurityGroupOwnerId	=> { type => SCALAR, optional => 1 },
-		IpProtocol 					=> { 
+		IpProtocol					=> {
 			type => SCALAR,
 			depends => ['FromPort', 'ToPort'],
-			optional => 1 
+			optional => 1,
 		},
-		FromPort 					=> { type => SCALAR, optional => 1 },
-		ToPort 						=> { type => SCALAR, optional => 1 },
+		FromPort					=> { type => SCALAR, optional => 1 },
+		ToPort						=> { type => SCALAR, optional => 1 },
 		CidrIp						=> { type => SCALAR, optional => 1 },
+		CallBack					=> { type => CODEREF, optional => 1 },
 	});
-	
-	
+
+	my $CallBack = $args{CallBack};
+	if ($CallBack) {
+		return $self->_sign_async(Action => 'AuthorizeSecurityGroupIngress',
+			%args,
+			CallBack => sub {
+				my $xml = shift;
+				$CallBack->(
+					$self->_authorize_security_group_ingress($xml));
+			}
+		);
+	}
+
 	my $xml = $self->_sign(Action  => 'AuthorizeSecurityGroupIngress', %args);
-	
+	return $self->_authorize_security_group_ingress($xml);
+}
+
+sub _authorize_security_group_ingress {
+	my ($self, $xml) = @_;
+
 	if ( grep { defined && length } $xml->{Errors} ) {
 		return $self->_parse_errors($xml);
 	}
@@ -568,6 +697,15 @@ conditions - A list of restrictions on what can be uploaded to Amazon S3. Must c
 bucket - The bucket to store the AMI. 
 acl - This must be set to ec2-bundle-read.
 
+=item CallBack (optional)
+
+The coderef which will be called when the HTTP request to EC2 has completed.
+This coderef should accept one parameter, the regular return value of this
+function in synchronous mode.
+
+If this callback is supplied instead of returning an array ref N:A:E:R objects
+it will return an AnyEvent condvar which can be waited upon for completion.
+
 =back
 
 Returns a Net::Amazon::EC2::BundleInstanceResponse object
@@ -583,10 +721,25 @@ sub bundle_instance {
 		'Storage.S3.AWSAccessKeyId'			=> { type => SCALAR },
 		'Storage.S3.UploadPolicy'			=> { type => SCALAR },
 		'Storage.S3.UploadPolicySignature'	=> { type => SCALAR },
+		CallBack						=> { type => CODEREF, optional => 1 },
 	});
 
+	my $CallBack = $args{CallBack};
+	if ($CallBack) {
+		return $self->_sign_async(Action => 'BundleInstance', %args,
+				CallBack => sub {
+			my $xml = shift;
+			$CallBack->($self->_bundle_instance($xml));
+		});
+	}
+
 	my $xml = $self->_sign(Action  => 'BundleInstance', %args);
-	
+	return $self->_associate_address($xml);
+}
+
+sub _bundle_instance {
+	my ($self, $xml) = @_;
+
 	if ( grep { defined && length } $xml->{Errors} ) {
 		return $self->_parse_errors($xml);
 	}
@@ -606,7 +759,7 @@ sub bundle_instance {
 			bundle_error_code			=> $xml->{bundleInstanceTask}{error}{code},
 			bundle_error_message		=> $xml->{bundleInstanceTask}{error}{message},
 		);
-		
+
 		return $bundle;
 	}
 }
@@ -621,6 +774,15 @@ Cancels the bundle task. This procedure is not applicable for Linux and UNIX ins
 
 The ID of the bundle task to cancel.
 
+=item CallBack (optional)
+
+The coderef which will be called when the HTTP request to EC2 has completed.
+This coderef should accept one parameter, the regular return value of this
+function in synchronous mode.
+
+If this callback is supplied instead of returning an array ref N:A:E:R objects
+it will return an AnyEvent condvar which can be waited upon for completion.
+
 =back
 
 Returns a Net::Amazon::EC2::BundleInstanceResponse object
@@ -630,11 +792,26 @@ Returns a Net::Amazon::EC2::BundleInstanceResponse object
 sub cancel_bundle_task {
 	my $self = shift;
 	my %args = validate( @_, {
-		'BundleId'							=> { type => SCALAR },
+		BundleId	=> { type => SCALAR },
+		CallBack	=> { type => CODEREF, optional => 1 },
 	});
 
+	my $CallBack = $args{CallBack};
+	if ($CallBack) {
+		return $self->_sign_async(Action => 'CancelBundleTask', %args,
+				CallBack => sub {
+			my $xml = shift;
+			$CallBack->($self->_cancel_bundle_task($xml));
+		});
+	}
+
 	my $xml = $self->_sign(Action  => 'CancelBundleTask', %args);
-	
+	return $self->_cancel_bundle_task($xml);
+}
+
+sub _cancel_bundle_task {
+	my ($self, $xml) = @_;
+
 	if ( grep { defined && length } $xml->{Errors} ) {
 		return $self->_parse_errors($xml);
 	}
@@ -654,7 +831,7 @@ sub cancel_bundle_task {
 			bundle_error_code			=> $xml->{bundleInstanceTask}{error}{code},
 			bundle_error_message		=> $xml->{bundleInstanceTask}{error}{message},
 		);
-		
+
 		return $bundle;
 	}
 }
@@ -673,6 +850,15 @@ The Product Code to check
 
 The Instance Id to check
 
+=item CallBack (optional)
+
+The coderef which will be called when the HTTP request to EC2 has completed.
+This coderef should accept one parameter, the regular return value of this
+function in synchronous mode.
+
+If this callback is supplied instead of returning an array ref N:A:E:R objects
+it will return an AnyEvent condvar which can be waited upon for completion.
+
 =back
 
 Returns a Net::Amazon::EC2::ConfirmProductInstanceResponse object
@@ -684,10 +870,25 @@ sub confirm_product_instance {
 	my %args = validate( @_, {
 		ProductCode	=> { type => SCALAR },
 		InstanceId	=> { type => SCALAR },
+		CallBack	=> { type => CODEREF, optional => 1 },
 	});
 
+	my $CallBack = $args{CallBack};
+	if ($CallBack) {
+		return $self->_sign_async(Action => 'ConfirmProductInstance', %args,
+				CallBack => sub {
+			my $xml = shift;
+			$CallBack->($self->_confirm_product_instance($xml));
+		});
+	}
+
 	my $xml = $self->_sign(Action  => 'ConfirmProductInstance', %args);
-	
+	return $self->_confirm_product_instance($xml);
+}
+
+sub _confirm_product_instance {
+	my ($self, $xml) = @_;
+
 	if ( grep { defined && length } $xml->{Errors} ) {
 		return $self->_parse_errors($xml);
 	}
@@ -696,7 +897,7 @@ sub confirm_product_instance {
 			'return'		=> $xml->{'return'},
 			owner_id		=> $xml->{ownerId},
 		);
-		
+
 		return $confirm_response;
 	}
 }
@@ -733,6 +934,15 @@ instance before image creation and reboots the instance afterwards. When set to 
 does not shut down the instance before creating the image. When this option is used, file system 
 integrity on the created image cannot be guaranteed. 
 
+=item CallBack (optional)
+
+The coderef which will be called when the HTTP request to EC2 has completed.
+This coderef should accept one parameter, the regular return value of this
+function in synchronous mode.
+
+If this callback is supplied instead of returning an array ref N:A:E:R objects
+it will return an AnyEvent condvar which can be waited upon for completion.
+
 =back
 
 Returns the ID of the AMI created.
@@ -746,9 +956,24 @@ sub create_image {
 		Name		=> { type => SCALAR },
 		Description	=> { type => SCALAR, optional => 1 },
 		NoReboot	=> { type => SCALAR, optional => 1 },
+		CallBack	=> { type => CODEREF, optional => 1 },
 	});
-		
+
+	my $CallBack = $args{CallBack};
+	if ($CallBack) {
+		return $self->_sign_async(Action => 'CreateImage', %args,
+				CallBack => sub {
+			my $xml = shift;
+			$CallBack->($self->_create_image($xml));
+		});
+	}
+
 	my $xml = $self->_sign(Action  => 'CreateImage', %args);
+	return $self->_create_image($xml);
+}
+
+sub _create_image {
+	my ($self, $xml) = @_;
 
 	if ( grep { defined && length } $xml->{Errors} ) {
 		return $self->_parse_errors($xml);
@@ -768,6 +993,15 @@ Creates a new 2048 bit key pair, taking the following parameter:
 
 A name for this key. Should be unique.
 
+=item CallBack (optional)
+
+The coderef which will be called when the HTTP request to EC2 has completed.
+This coderef should accept one parameter, the regular return value of this
+function in synchronous mode.
+
+If this callback is supplied instead of returning an array ref N:A:E:R objects
+it will return an AnyEvent condvar which can be waited upon for completion.
+
 =back
 
 Returns a Net::Amazon::EC2::KeyPair object
@@ -777,10 +1011,25 @@ Returns a Net::Amazon::EC2::KeyPair object
 sub create_key_pair {
 	my $self = shift;
 	my %args = validate( @_, {
-		KeyName => { type => SCALAR },
+		KeyName		=> { type => SCALAR },
+		CallBack	=> { type => CODEREF, optional => 1 },
 	});
-		
+
+	my $CallBack = $args{CallBack};
+	if ($CallBack) {
+		return $self->_sign_async(Action => 'CreateKeyPair', %args,
+				CallBack => sub {
+			my $xml = shift;
+			$CallBack->($self->_create_key_pair($xml));
+		});
+	}
+
 	my $xml = $self->_sign(Action  => 'CreateKeyPair', %args);
+	return $self->_create_key_pair($xml);
+}
+
+sub _create_key_pair {
+	my ($self, $xml) = @_;
 
 	if ( grep { defined && length } $xml->{Errors} ) {
 		return $self->_parse_errors($xml);
@@ -791,7 +1040,7 @@ sub create_key_pair {
 			key_fingerprint	=> $xml->{keyFingerprint},
 			key_material	=> $xml->{keyMaterial},
 		);
-		
+
 		return $key_pair;
 	}
 }
@@ -810,6 +1059,15 @@ The name of the new group to create.
 
 A short description of the new group.
 
+=item CallBack (optional)
+
+The coderef which will be called when the HTTP request to EC2 has completed.
+This coderef should accept one parameter, the regular return value of this
+function in synchronous mode.
+
+If this callback is supplied instead of returning an array ref N:A:E:R objects
+it will return an AnyEvent condvar which can be waited upon for completion.
+
 =back
 
 Returns 1 if the group creation succeeds.
@@ -820,11 +1078,25 @@ sub create_security_group {
 	my $self = shift;
 	my %args = validate( @_, {
 		GroupName				=> { type => SCALAR },
-		GroupDescription 		=> { type => SCALAR },
+		GroupDescription		=> { type => SCALAR },
+		CallBack				=> { type => CODEREF, optional => 1 },
 	});
-	
-	
+
+	my $CallBack = $args{CallBack};
+	if ($CallBack) {
+		return $self->_sign_async(Action => 'CreateSecurityGroup', %args,
+				CallBack => sub {
+			my $xml = shift;
+			$CallBack->($self->_create_security_group($xml));
+		});
+	}
+
 	my $xml = $self->_sign(Action  => 'CreateSecurityGroup', %args);
+	return $self->_create_security_group($xml);
+}
+
+sub _create_security_group {
+	my ($self, $xml) = @_;
 
 	if ( grep { defined && length } $xml->{Errors} ) {
 		return $self->_parse_errors($xml);
@@ -836,7 +1108,7 @@ sub create_security_group {
 		else {
 			return undef;
 		}
-	}	
+	}
 }
 
 =head2 create_snapshot(%params)
@@ -853,6 +1125,15 @@ The volume id of the volume you want to take a snapshot of.
 
 Description of the Amazon EBS snapshot.
 
+=item CallBack (optional)
+
+The coderef which will be called when the HTTP request to EC2 has completed.
+This coderef should accept one parameter, the regular return value of this
+function in synchronous mode.
+
+If this callback is supplied instead of returning an array ref N:A:E:R objects
+it will return an AnyEvent condvar which can be waited upon for completion.
+
 =back
 
 Returns a Net::Amazon::EC2::Snapshot object of the newly created snapshot.
@@ -865,10 +1146,23 @@ sub create_snapshot {
 		VolumeId	=> { type => SCALAR },
 		Description	=> { type => SCALAR, optional => 1 },
 	});
-	
-	my $xml = $self->_sign(Action  => 'CreateSnapshot', %args);
 
-	
+	my $CallBack = $args{CallBack};
+	if ($CallBack) {
+		return $self->_sign_async(Action => 'CreateSnapshot', %args,
+				CallBack => sub {
+			my $xml = shift;
+			$CallBack->($self->_create_snapshot($xml));
+		});
+	}
+
+	my $xml = $self->_sign(Action  => 'CreateSnapshot', %args);
+	return $self->_create_snapshot($xml);
+}
+
+sub _create_snapshot {
+	my ($self, $xml) = @_;
+
 	if ( grep { defined && length } $xml->{Errors} ) {
 		return $self->_parse_errors($xml);
 	}
@@ -888,7 +1182,7 @@ sub create_snapshot {
 			description		=> $xml->{description},
 		);
 
-  		return $snapshot;
+		return $snapshot;
 	}
 }
 
@@ -906,6 +1200,15 @@ The ID of the resource to create tags. Can be a scalar or arrayref
 
 Hashref where keys and values will be set on all resources given in the first element.
 
+=item CallBack (optional)
+
+The coderef which will be called when the HTTP request to EC2 has completed.
+This coderef should accept one parameter, the regular return value of this
+function in synchronous mode.
+
+If this callback is supplied instead of returning an array ref N:A:E:R objects
+it will return an AnyEvent condvar which can be waited upon for completion.
+
 =back
 
 Returns true if the tag creation succeeded.
@@ -919,17 +1222,17 @@ sub create_tags {
 		Tags				    => { type => HASHREF },
 	});
 
-        if (ref ($args{'ResourceId'}) eq 'ARRAY') {
-                my $keys                        = delete $args{'ResourceId'};
-                my $count                       = 1;
-                foreach my $key (@{$keys}) {
-                        $args{"ResourceId." . $count} = $key;
-                        $count++;
-                }
-        }
-        else {
-                $args{"ResourceId.1"} = delete $args{'ResourceId'};
-        }
+	if (ref ($args{'ResourceId'}) eq 'ARRAY') {
+		my $keys	= delete $args{'ResourceId'};
+		my $count	= 1;
+		foreach my $key (@{$keys}) {
+			$args{"ResourceId." . $count} = $key;
+			$count++;
+		}
+	}
+	else {
+		$args{"ResourceId.1"} = delete $args{'ResourceId'};
+	}
 
 	if (ref ($args{'Tags'}) eq 'HASH') {
 		my $count			= 1;
@@ -942,7 +1245,21 @@ sub create_tags {
 		}
 	}
 
+	my $CallBack = $args{CallBack};
+	if ($CallBack) {
+		return $self->_sign_async(Action => 'CreateTags', %args,
+				CallBack => sub {
+			my $xml = shift;
+			$CallBack->($self->_create_tags($xml));
+		});
+	}
+
 	my $xml = $self->_sign(Action  => 'CreateTags', %args);
+	return $self->_create_tags($xml);
+}
+
+sub _create_tags {
+	my ($self, $xml) = @_;
 
 	if ( grep { defined && length } $xml->{Errors} ) {
 		return $self->_parse_errors($xml);
@@ -985,6 +1302,15 @@ The number of I/O operations per second (IOPS) that the volume
 supports.  Required when the volume type is io1; not used with
 standard volumes.
 
+=item CallBack (optional)
+
+The coderef which will be called when the HTTP request to EC2 has completed.
+This coderef should accept one parameter, the regular return value of this
+function in synchronous mode.
+
+If this callback is supplied instead of returning an array ref N:A:E:R objects
+it will return an AnyEvent condvar which can be waited upon for completion.
+
 =back
 
 Returns a Net::Amazon::EC2::Volume object containing the resulting volume
@@ -998,13 +1324,27 @@ sub create_volume {
 		Size				=> { type => SCALAR },
 		SnapshotId			=> { type => SCALAR, optional => 1 },
 		AvailabilityZone	=> { type => SCALAR },
-                VolumeType		=> { type => SCALAR, optional => 1 },
-                Iops			=> { type => SCALAR, optional => 1 },
+		VolumeType			=> { type => SCALAR, optional => 1 },
+		Iops				=> { type => SCALAR, optional => 1 },
+		CallBack			=> { type => CODEREF, optional => 1},
 	});
 
-	my $xml = $self->_sign(Action  => 'CreateVolume', %args);
+	my $CallBack = $args{CallBack};
+	if ($CallBack) {
+		return $self->_sign_async(Action => 'CreateVolume', %args,
+				CallBack => sub {
+			my $xml = shift;
+			$CallBack->($self->_create_volume($xml));
+		});
+	}
 
-	
+	my $xml = $self->_sign(Action  => 'CreateVolume', %args);
+	return $self->_create_volume($xml);
+}
+
+sub _create_volume {
+	my ($self, $xml) = @_;
+
 	if ( grep { defined && length } $xml->{Errors} ) {
 		return $self->_parse_errors($xml);
 	}
@@ -1039,6 +1379,15 @@ This method deletes a keypair.  Takes the following parameter:
 
 The name of the key to delete.
 
+=item CallBack (optional)
+
+The coderef which will be called when the HTTP request to EC2 has completed.
+This coderef should accept one parameter, the regular return value of this
+function in synchronous mode.
+
+If this callback is supplied instead of returning an array ref N:A:E:R objects
+it will return an AnyEvent condvar which can be waited upon for completion.
+
 =back
 
 Returns 1 if the key was successfully deleted.
@@ -1048,10 +1397,25 @@ Returns 1 if the key was successfully deleted.
 sub delete_key_pair {
 	my $self = shift;
 	my %args = validate( @_, {
-		KeyName => { type => SCALAR },
+		KeyName		=> { type => SCALAR },
+		CallBack	=> { type => CODEREF, optional => 1 },
 	});
-		
+
+	my $CallBack = $args{CallBack};
+	if ($CallBack) {
+		return $self->_sign_async(Action => 'DeleteKeyPair', %args,
+				CallBack => sub {
+			my $xml = shift;
+			$CallBack->($self->_delete_key_pair($xml));
+		});
+	}
+
 	my $xml = $self->_sign(Action  => 'DeleteKeyPair', %args);
+	return $self->_delete_key_pair($xml);
+}
+
+sub _delete_key_pair {
+	my ($self, $xml) = @_;
 
 	if ( grep { defined && length } $xml->{Errors} ) {
 		return $self->_parse_errors($xml);
@@ -1063,7 +1427,7 @@ sub delete_key_pair {
 		else {
 			return undef;
 		}
-	}	
+	}
 }
 
 =head2 delete_security_group(%params)
@@ -1076,6 +1440,15 @@ This method deletes a security group.  It takes the following parameter:
 
 The name of the security group to delete.
 
+=item CallBack (optional)
+
+The coderef which will be called when the HTTP request to EC2 has completed.
+This coderef should accept one parameter, the regular return value of this
+function in synchronous mode.
+
+If this callback is supplied instead of returning an array ref N:A:E:R objects
+it will return an AnyEvent condvar which can be waited upon for completion.
+
 =back
 
 Returns 1 if the delete succeeded.
@@ -1085,12 +1458,26 @@ Returns 1 if the delete succeeded.
 sub delete_security_group {
 	my $self = shift;
 	my %args = validate( @_, {
-		GroupName => { type => SCALAR },
+		GroupName	=> { type => SCALAR },
+		CallBack	=> { type => CODEREF, optional => 1 },
 	});
-	
-	
+
+	my $CallBack = $args{CallBack};
+	if ($CallBack) {
+		return $self->_sign_async(Action => 'DeleteSecurityGroup', %args,
+				CallBack => sub {
+			my $xml = shift;
+			$CallBack->($self->_delete_security_group($xml));
+		});
+	}
+
 	my $xml = $self->_sign(Action  => 'DeleteSecurityGroup', %args);
-	
+	return $self->_delete_security_group($xml);
+}
+
+sub _delete_security_group {
+	my ($self, $xml) = @_;
+
 	if ( grep { defined && length } $xml->{Errors} ) {
 		return $self->_parse_errors($xml);
 	}
@@ -1114,6 +1501,15 @@ Deletes the snapshots passed in. It takes the following arguments:
 
 A snapshot id can be passed in. Will delete the corresponding snapshot.
 
+=item CallBack (optional)
+
+The coderef which will be called when the HTTP request to EC2 has completed.
+This coderef should accept one parameter, the regular return value of this
+function in synchronous mode.
+
+If this callback is supplied instead of returning an array ref N:A:E:R objects
+it will return an AnyEvent condvar which can be waited upon for completion.
+
 =back
 
 Returns true if the deleting succeeded.
@@ -1124,9 +1520,24 @@ sub delete_snapshot {
 	my $self = shift;
 	my %args = validate( @_, {
 		SnapshotId	=> { type => SCALAR },
+		CallBack	=> { type => CODEREF, optional => 1 },
 	});
 
+	my $CallBack = $args{CallBack};
+	if ($CallBack) {
+		return $self->_sign_async(Action => 'DeleteSnapshot', %args,
+				CallBack => sub {
+			my $xml = shift;
+			$CallBack->($self->_delete_snapshot($xml));
+		});
+	}
+
 	my $xml = $self->_sign(Action  => 'DeleteSnapshot', %args);
+	return $self->_delete_snapshot($xml);
+}
+
+sub _delete_snapshot {
+	my ($self, $xml) = @_;
 
 	if ( grep { defined && length } $xml->{Errors} ) {
 		return $self->_parse_errors($xml);
@@ -1151,6 +1562,15 @@ Delete a volume.
 
 The volume id you wish to delete.
 
+=item CallBack (optional)
+
+The coderef which will be called when the HTTP request to EC2 has completed.
+This coderef should accept one parameter, the regular return value of this
+function in synchronous mode.
+
+If this callback is supplied instead of returning an array ref N:A:E:R objects
+it will return an AnyEvent condvar which can be waited upon for completion.
+
 =back
 
 Returns true if the deleting succeeded.
@@ -1161,11 +1581,25 @@ sub delete_volume {
 	my $self = shift;
 	my %args = validate( @_, {
 		VolumeId	=> { type => SCALAR, optional => 1 },
+		CallBack	=> { type => CODEREF, optional => 1 },
 	});
 
-	my $xml = $self->_sign(Action  => 'DeleteVolume', %args);
+	my $CallBack = $args{CallBack};
+	if ($CallBack) {
+		return $self->_sign_async(Action => 'DeleteVolume', %args,
+				CallBack => sub {
+			my $xml = shift;
+			$CallBack->($self->_delete_volume($xml));
+		});
+	}
 
-	
+	my $xml = $self->_sign(Action  => 'DeleteVolume', %args);
+	return $self->_delete_volume($xml);
+}
+
+sub _delete_volume {
+	my ($self, $xml) = @_;
+
 	if ( grep { defined && length } $xml->{Errors} ) {
 		return $self->_parse_errors($xml);
 	}
@@ -1197,6 +1631,15 @@ Key for a tag, may pass in a scalar or arrayref.
 
 Value for a tag, may pass in a scalar or arrayref.
 
+=item CallBack (optional)
+
+The coderef which will be called when the HTTP request to EC2 has completed.
+This coderef should accept one parameter, the regular return value of this
+function in synchronous mode.
+
+If this callback is supplied instead of returning an array ref N:A:E:R objects
+it will return an AnyEvent condvar which can be waited upon for completion.
+
 =back
 
 Returns true if the releasing succeeded.
@@ -1206,9 +1649,10 @@ Returns true if the releasing succeeded.
 sub delete_tags {
 	my $self = shift;
 	my %args = validate( @_, {
-		ResourceId				=> { type => ARRAYREF | SCALAR },
-		'Tag.Key'				=> { type => ARRAYREF | SCALAR },
-		'Tag.Value'				=> { type => ARRAYREF | SCALAR, optional => 1 },
+		ResourceId	=> { type => ARRAYREF | SCALAR },
+		'Tag.Key'	=> { type => ARRAYREF | SCALAR },
+		'Tag.Value'	=> { type => ARRAYREF | SCALAR, optional => 1 },
+		CallBack	=> { type => CODEREF, optional => 1 },
 	});
 
 	# If we have a array ref of keys lets split them out into their Tag.n.Key format
@@ -1231,7 +1675,21 @@ sub delete_tags {
 		}
 	}
 
+	my $CallBack = $args{CallBack};
+	if ($CallBack) {
+		return $self->_sign_async(Action => 'DeleteTags', %args,
+				CallBack => sub {
+			my $xml = shift;
+			$CallBack->($self->_delete_tags($xml));
+		});
+	}
+
 	my $xml = $self->_sign(Action  => 'DeleteTags', %args);
+	return $self->_delete_tags($xml);
+}
+
+sub _delete_tags {
+	my ($self, $xml) = @_;
 
 	if ( grep { defined && length } $xml->{Errors} ) {
 		return $self->_parse_errors($xml);
@@ -1257,6 +1715,15 @@ This method will deregister an AMI. It takes the following parameter:
 
 The image id of the AMI you want to deregister.
 
+=item CallBack (optional)
+
+The coderef which will be called when the HTTP request to EC2 has completed.
+This coderef should accept one parameter, the regular return value of this
+function in synchronous mode.
+
+If this callback is supplied instead of returning an array ref N:A:E:R objects
+it will return an AnyEvent condvar which can be waited upon for completion.
+
 =back
 
 Returns 1 if the deregistering succeeded
@@ -1266,11 +1733,25 @@ Returns 1 if the deregistering succeeded
 sub deregister_image {
 	my $self = shift;
 	my %args = validate( @_, {
-		ImageId	=> { type => SCALAR },
+		ImageId		=> { type => SCALAR },
+		CallBack	=> { type => CODEREF, optional => 1 },
 	});
-	
+
+	my $CallBack = $args{CallBack};
+	if ($CallBack) {
+		return $self->_sign_async(Action => 'DeregisterImage', %args,
+				CallBack => sub {
+			my $xml = shift;
+			$CallBack->($self->_deregister_image($xml));
+		});
+	}
 
 	my $xml = $self->_sign(Action  => 'DeregisterImage', %args);
+	return $self->_deregister_image($xml);
+}
+
+sub _deregister_image {
+	my ($self, $xml) = @_;
 
 	if ( grep { defined && length } $xml->{Errors} ) {
 		return $self->_parse_errors($xml);
@@ -1295,6 +1776,15 @@ This method describes the elastic addresses currently allocated and any instance
 
 The IP address to describe. Can be either a scalar or an array ref.
 
+=item CallBack (optional)
+
+The coderef which will be called when the HTTP request to EC2 has completed.
+This coderef should accept one parameter, the regular return value of this
+function in synchronous mode.
+
+If this callback is supplied instead of returning an array ref N:A:E:R objects
+it will return an AnyEvent condvar which can be waited upon for completion.
+
 =back
 
 Returns an array ref of Net::Amazon::EC2::DescribeAddress objects
@@ -1304,7 +1794,8 @@ Returns an array ref of Net::Amazon::EC2::DescribeAddress objects
 sub describe_addresses {
 	my $self = shift;
 	my %args = validate( @_, {
-		PublicIp 		=> { type => SCALAR, optional => 1 },
+		PublicIp	=> { type => SCALAR, optional => 1 },
+		CallBack	=> { type => CODEREF, optional => 1 },
 	});
 
 	# If we have a array ref of ip addresses lets split them out into their PublicIp.n format
@@ -1316,10 +1807,25 @@ sub describe_addresses {
 			$count++;
 		}
 	}
-	
-	my $addresses;
+
+	my $CallBack = $args{CallBack};
+	if ($CallBack) {
+		return $self->_sign_async(Action => 'DescribeAddresses', %args,
+				CallBack => sub {
+			my $xml = shift;
+			$CallBack->($self->_describe_addresses($xml));
+		});
+	}
+
 	my $xml = $self->_sign(Action  => 'DescribeAddresses', %args);
-	
+	return $self->_describe_addresses($xml);
+}
+
+sub _describe_addresses {
+	my ($self, $xml) = @_;
+
+	my $addresses;
+
 	if ( grep { defined && length } $xml->{Errors} ) {
 		return $self->_parse_errors($xml);
 	}
@@ -1328,15 +1834,15 @@ sub describe_addresses {
 			if (ref($addy->{instanceId}) eq 'HASH') {
 				undef $addy->{instanceId};
 			}
-			
+
 			my $address = Net::Amazon::EC2::DescribeAddress->new(
 				public_ip	=> $addy->{publicIp},
 				instance_id	=> $addy->{instanceId},
 			);
-			
+
 			push @$addresses, $address;
 		}
-		
+
 		return $addresses;
 	}
 }
@@ -1351,6 +1857,15 @@ This method describes the availability zones currently available to choose from.
 
 The zone name to describe. Can be either a scalar or an array ref.
 
+=item CallBack (optional)
+
+The coderef which will be called when the HTTP request to EC2 has completed.
+This coderef should accept one parameter, the regular return value of this
+function in synchronous mode.
+
+If this callback is supplied instead of returning an array ref N:A:E:R objects
+it will return an AnyEvent condvar which can be waited upon for completion.
+
 =back
 
 Returns an array ref of Net::Amazon::EC2::AvailabilityZone objects
@@ -1361,6 +1876,7 @@ sub describe_availability_zones {
 	my $self = shift;
 	my %args = validate( @_, {
 		ZoneName	=> { type => SCALAR, optional => 1 },
+		CallBack	=> { type => CODEREF, optional => 1 },
 	});
 
 	# If we have a array ref of zone names lets split them out into their ZoneName.n format
@@ -1372,8 +1888,22 @@ sub describe_availability_zones {
 			$count++;
 		}
 	}
-	
+
+	my $CallBack = $args{CallBack};
+	if ($CallBack) {
+		return $self->_sign_async(Action => 'DescribeAvailabilityZones', %args,
+				CallBack => sub {
+			my $xml = shift;
+			$CallBack->($self->_describe_availability_zones($xml));
+		});
+	}
+
 	my $xml = $self->_sign(Action  => 'DescribeAvailabilityZones', %args);
+	return $self->_describe_availability_zones($xml);
+}
+
+sub _describe_availability_zones {
+	my ($self, $xml) = @_;
 
 	if ( grep { defined && length } $xml->{Errors} ) {
 		return $self->_parse_errors($xml);
@@ -1387,20 +1917,20 @@ sub describe_availability_zones {
 				my $availability_zone_message = Net::Amazon::EC2::AvailabilityZoneMessage->new(
 					message => $azm->{message},
 				);
-				
+
 				push @$availability_zone_messages, $availability_zone_message;
 			}
-			
+
 			my $availability_zone = Net::Amazon::EC2::AvailabilityZone->new(
 				zone_name	=> $az->{zoneName},
 				zone_state	=> $az->{zoneState},
 				region_name	=> $az->{regionName},
 				messages	=> $availability_zone_messages,
 			);
-			
+
 			push @$availability_zones, $availability_zone;
 		}
-		
+
 		return $availability_zones;
 	}
 }
@@ -1415,6 +1945,15 @@ Describes current bundling tasks. This procedure is not applicable for Linux and
 
 The optional ID of the bundle task to describe.
 
+=item CallBack (optional)
+
+The coderef which will be called when the HTTP request to EC2 has completed.
+This coderef should accept one parameter, the regular return value of this
+function in synchronous mode.
+
+If this callback is supplied instead of returning an array ref N:A:E:R objects
+it will return an AnyEvent condvar which can be waited upon for completion.
+
 =back
 
 Returns a array ref of Net::Amazon::EC2::BundleInstanceResponse objects
@@ -1424,17 +1963,32 @@ Returns a array ref of Net::Amazon::EC2::BundleInstanceResponse objects
 sub describe_bundle_tasks {
 	my $self = shift;
 	my %args = validate( @_, {
-		'BundleId'							=> { type => SCALAR, optional => 1 },
+		'BundleId'	=> { type => SCALAR, optional => 1 },
+		CallBack	=> { type => CODEREF, optional => 1 },
 	});
 
+	my $CallBack = $args{CallBack};
+	if ($CallBack) {
+		return $self->_sign_async(Action => 'DescribeBundleTasks', %args,
+				CallBack => sub {
+			my $xml = shift;
+			$CallBack->($self->_describe_bundle_tasks($xml));
+		});
+	}
+
 	my $xml = $self->_sign(Action  => 'DescribeBundleTasks', %args);
-	
+	return $self->_describe_bundle_tasks($xml);
+}
+
+sub _describe_bundle_tasks {
+	my ($self, $xml) = @_;
+
 	if ( grep { defined && length } $xml->{Errors} ) {
 		return $self->_parse_errors($xml);
 	}
 	else {
 		my $bundle_tasks;
-		
+
 		foreach my $item (@{$xml->{bundleInstanceTasksSet}{item}}) {
 			my $bundle = Net::Amazon::EC2::BundleInstanceResponse->new(
 				instance_id					=> $item->{instanceId},
@@ -1451,10 +2005,10 @@ sub describe_bundle_tasks {
 				bundle_error_code			=> $item->{error}{code},
 				bundle_error_message		=> $item->{error}{message},
 			);
-			
+
 			push @$bundle_tasks, $bundle;
 		}
-				
+
 		return $bundle_tasks;
 	}
 }
@@ -1493,6 +2047,15 @@ Valid attributes are:
 
 =back
 
+=item CallBack (optional)
+
+The coderef which will be called when the HTTP request to EC2 has completed.
+This coderef should accept one parameter, the regular return value of this
+function in synchronous mode.
+
+If this callback is supplied instead of returning an array ref N:A:E:R objects
+it will return an AnyEvent condvar which can be waited upon for completion.
+
 =back
 
 Returns a Net::Amazon::EC2::DescribeImageAttribute object
@@ -1506,12 +2069,27 @@ AWS returns an invalid response. No response yet from Amazon on an ETA for getti
 sub describe_image_attribute {
 	my $self = shift;
 	my %args = validate( @_, {
-								ImageId => { type => SCALAR },
-								Attribute => { type => SCALAR }
+		ImageId		=> { type => SCALAR },
+		Attribute	=> { type => SCALAR },
+		CallBack	=> { type => CODEREF, optional => 1 },
 	});
-		
+
+	my $CallBack = $args{CallBack};
+	if ($CallBack) {
+		return $self->_sign_async(Action => 'DescribeImageAttribute', %args,
+				CallBack => sub {
+			my $xml = shift;
+			$CallBack->($self->_describe_image_attribute($xml));
+		});
+	}
+
 	my $xml = $self->_sign(Action  => 'DescribeImageAttribute', %args);
-	
+	return $self->_describe_image_attribute($xml);
+}
+
+sub _describe_image_attribute {
+	my ($self, $xml) = @_;
+
 	if ( grep { defined && length } $xml->{Errors} ) {
 		return $self->_parse_errors($xml);
 	}
@@ -1519,14 +2097,14 @@ sub describe_image_attribute {
 		my $launch_permissions;
 		my $product_codes;
 		my $block_device_mappings;
-		
+
 		if ( grep { defined && length } $xml->{launchPermission}{item} ) {
 			foreach my $lp (@{$xml->{launchPermission}{item}}) {
 				my $launch_permission = Net::Amazon::EC2::LaunchPermission->new(
 					group	=> $lp->{group},
 					user_id	=> $lp->{userId},
 				);
-				
+
 				push @$launch_permissions, $launch_permission;
 			}
 		}
@@ -1536,22 +2114,22 @@ sub describe_image_attribute {
 				my $product_code = Net::Amazon::EC2::ProductCode->new(
 					product_code	=> $pc->{productCode},
 				);
-				
+
 				push @$product_codes, $product_code;
 			}
 		}
-		
+
 		if ( grep { defined && length } $xml->{blockDeviceMapping}{item} ) {
 			foreach my $bd (@{$xml->{blockDeviceMapping}{item}}) {
 				my $block_device_mapping = Net::Amazon::EC2::BlockDeviceMapping->new(
 					virtual_name	=> $bd->{virtualName},
 					device_name		=> $bd->{deviceName},
 				);
-				
+
 				push @$block_device_mappings, $block_device_mapping;
 			}
 		}
-		
+
 		my $describe_image_attribute = Net::Amazon::EC2::DescribeImageAttribute->new(
 			image_id			=> $xml->{imageId},
 			launch_permissions	=> $launch_permissions,
@@ -1584,6 +2162,15 @@ Either a scalar or an array ref can be passed in, will cause AMIs owned by the O
 
 Either a scalar or an array ref can be passed in, will cause AMIs executable by the account id's specified.  Or 'self' for your own AMIs.
 
+=item CallBack (optional)
+
+The coderef which will be called when the HTTP request to EC2 has completed.
+This coderef should accept one parameter, the regular return value of this
+function in synchronous mode.
+
+If this callback is supplied instead of returning an array ref N:A:E:R objects
+it will return an AnyEvent condvar which can be waited upon for completion.
+
 =back
 
 Returns an array ref of Net::Amazon::EC2::DescribeImagesResponse objects
@@ -1596,8 +2183,9 @@ sub describe_images {
 		ImageId			=> { type => SCALAR | ARRAYREF, optional => 1 },
 		Owner			=> { type => SCALAR | ARRAYREF, optional => 1 },
 		ExecutableBy	=> { type => SCALAR | ARRAYREF, optional => 1 },
+		CallBack		=> { type => CODEREF, optional => 1 },
 	});
-	
+
 	# If we have a array ref of instances lets split them out into their ImageId.n format
 	if (ref ($args{ImageId}) eq 'ARRAY') {
 		my $image_ids	= delete $args{ImageId};
@@ -1607,7 +2195,7 @@ sub describe_images {
 			$count++;
 		}
 	}
-	
+
 	# If we have a array ref of instances lets split them out into their Owner.n format
 	if (ref ($args{Owner}) eq 'ARRAY') {
 		my $owners	= delete $args{Owner};
@@ -1628,19 +2216,33 @@ sub describe_images {
 		}
 	}
 
+	my $CallBack = $args{CallBack};
+	if ($CallBack) {
+		return $self->_sign_async(Action => 'DescribeImages', %args,
+				CallBack => sub {
+			my $xml = shift;
+			$CallBack->($self->_describe_images($xml));
+		});
+	}
+
 	my $xml = $self->_sign(Action  => 'DescribeImages', %args);
-	
+	return $self->_describe_images($xml);
+}
+
+sub _describe_images {
+	my ($self, $xml) = @_;
+
 	if ( grep { defined && length } $xml->{Errors} ) {
 		return $self->_parse_errors($xml);
 	}
 	else {
 		my $images;
-		
+
 		foreach my $item (@{$xml->{imagesSet}{item}}) {
 			my $product_codes;
 			my $state_reason;
 			my $block_device_mappings;
-			
+
 			if ( grep { defined && length } $item->{stateReason} ) {
 				$state_reason = Net::Amazon::EC2::StateReason->new(
 					code	=> $item->{stateReason}{code},
@@ -1653,16 +2255,16 @@ sub describe_images {
 					my $virtual_name;
 					my $no_device;
 					my $ebs_block_device_mapping;
-					
+
 					if ( grep { defined && length } $bdm->{ebs} ) {
 						$ebs_block_device_mapping = Net::Amazon::EC2::EbsBlockDevice->new(
 							snapshot_id				=> $bdm->{ebs}{snapshotId},
 							volume_size				=> $bdm->{ebs}{volumeSize},
-							delete_on_termination	=> $bdm->{ebs}{deleteOnTermination},							
+							delete_on_termination	=> $bdm->{ebs}{deleteOnTermination},
 						);
 					}
-					
-					
+
+
 					my $block_device_mapping = Net::Amazon::EC2::BlockDeviceMapping->new(
 						device_name		=> $bdm->{deviceName},
 						virtual_name	=> $virtual_name,
@@ -1693,20 +2295,20 @@ sub describe_images {
 				root_device_name		=> $item->{rootDeviceName},
 				block_device_mapping	=> $block_device_mappings,
 			);
-			
+
 			if (grep { defined && length } $item->{productCodes} ) {
 				foreach my $pc (@{$item->{productCodes}{item}}) {
 					my $product_code = Net::Amazon::EC2::ProductCode->new( product_code => $pc->{productCode} );
 					push @$product_codes, $product_code;
 				}
-				
+
 				$image->product_codes($product_codes);
 			}
 
-			
+
 			push @$images, $image;
 		}
-				
+
 		return $images;
 	}
 }
@@ -1727,6 +2329,15 @@ The filters for only the matching instances to be 'described'.
 A filter tuple is an arrayref constsing one key and one or more values.
 The option takes one filter tuple, or an arrayref of multiple filter tuples.
 
+=item CallBack (optional)
+
+The coderef which will be called when the HTTP request to EC2 has completed.
+This coderef should accept one parameter, the regular return value of this
+function in synchronous mode.
+
+If this callback is supplied instead of returning an array ref N:A:E:R objects
+it will return an AnyEvent condvar which can be waited upon for completion.
+
 =back
 
 Returns an array ref of Net::Amazon::EC2::ReservationInfo objects
@@ -1738,8 +2349,9 @@ sub describe_instances {
 	my %args = validate( @_, {
 		InstanceId	=> { type => SCALAR | ARRAYREF, optional => 1 },
 		Filter		=> { type => ARRAYREF, optional => 1 },
+		CallBack	=> { type => CODEREF, optional => 1 },
 	});
-	
+
 	# If we have a array ref of instances lets split them out into their InstanceId.n format
 	if (ref ($args{InstanceId}) eq 'ARRAY') {
 		my $instance_ids	= delete $args{InstanceId};
@@ -1751,9 +2363,26 @@ sub describe_instances {
 	}
 
 	$self->_build_filters(\%args);
+
+	my $CallBack = delete($args{CallBack});
+	if ($CallBack) {
+		return $self->_sign_async(
+			Action		=> 'DescribeInstances', %args,
+			CallBack	=> sub {
+				my $xml = shift;
+				$CallBack->($self->_describe_instances($xml));
+			},
+		);
+	}
+
 	my $xml = $self->_sign(Action  => 'DescribeInstances', %args);
+	return $self->_describe_instances($xml);
+}
+
+sub _describe_instances {
+	my ($self, $xml) = @_;
 	my $reservations;
-	
+
 	if ( grep { defined && length } $xml->{Errors} ) {
 		return $self->_parse_errors($xml);
 	}
@@ -1767,18 +2396,18 @@ sub describe_instances {
 				);
 				push @$group_sets, $group;
 			}
-	
+
 			my $running_instances;
 			foreach my $instance_elem (@{$reservation_set->{instancesSet}{item}}) {
 				my $instance_state_type = Net::Amazon::EC2::InstanceState->new(
 					code	=> $instance_elem->{instanceState}{code},
 					name	=> $instance_elem->{instanceState}{name},
 				);
-				
+
 				my $product_codes;
 				my $block_device_mappings;
 				my $state_reason;
-				
+
 				if (grep { defined && length } $instance_elem->{productCodes} ) {
 					foreach my $pc (@{$instance_elem->{productCodes}{item}}) {
 						my $product_code = Net::Amazon::EC2::ProductCode->new( product_code => $pc->{productCode} );
@@ -1792,9 +2421,9 @@ sub describe_instances {
 							volume_id				=> $bdm->{ebs}{volumeId},
 							status					=> $bdm->{ebs}{status},
 							attach_time				=> $bdm->{ebs}{attachTime},
-							delete_on_termination	=> $bdm->{ebs}{deleteOnTermination},							
+							delete_on_termination	=> $bdm->{ebs}{deleteOnTermination},
 						);
-						
+
 						my $block_device_mapping = Net::Amazon::EC2::BlockDeviceMapping->new(
 							ebs						=> $ebs_block_device_mapping,
 							device_name				=> $bdm->{deviceName},
@@ -1809,15 +2438,15 @@ sub describe_instances {
 						message	=> $instance_elem->{stateReason}{message},
 					);
 				}
-				
+
 				unless ( grep { defined && length } $instance_elem->{reason} and ref $instance_elem->{reason} ne 'HASH' ) {
 					$instance_elem->{reason} = undef;
 				}
-						
+
 				unless ( grep { defined && length } $instance_elem->{privateDnsName} and ref $instance_elem->{privateDnsName} ne 'HASH' ) {
 					$instance_elem->{privateDnsName} = undef;
 				}
-									
+
 				unless ( grep { defined && length } $instance_elem->{dnsName} and ref $instance_elem->{dnsName} ne 'HASH' ) {
 					$instance_elem->{dnsName} = undef;
 				}
@@ -1825,7 +2454,7 @@ sub describe_instances {
 				unless ( grep { defined && length } $instance_elem->{placement}{availabilityZone} and ref $instance_elem->{placement}{availabilityZone} ne 'HASH' ) {
 					$instance_elem->{placement}{availabilityZone} = undef;
 				}
-				
+
 				my $placement_response = Net::Amazon::EC2::PlacementResponse->new( availability_zone => $instance_elem->{placement}{availabilityZone} );
 
 				my $tag_sets;
@@ -1871,10 +2500,10 @@ sub describe_instances {
 				if ($product_codes) {
 					$running_instance->product_codes($product_codes);
 				}
-				
+
 				push @$running_instances, $running_instance;
 			}
-						
+
 			my $reservation = Net::Amazon::EC2::ReservationInfo->new(
 				reservation_id	=> $reservation_set->{reservationId},
 				owner_id		=> $reservation_set->{ownerId},
@@ -1882,10 +2511,10 @@ sub describe_instances {
 				instances_set	=> $running_instances,
 				requester_id	=> $reservation_set->{requesterId},
 			);
-			
+
 			push @$reservations, $reservation;
 		}
-			
+
 	}
 
 	return $reservations;
@@ -1925,6 +2554,15 @@ The attribute we want to describe. Valid values are:
 
 =back 
 
+=item CallBack (optional)
+
+The coderef which will be called when the HTTP request to EC2 has completed.
+This coderef should accept one parameter, the regular return value of this
+function in synchronous mode.
+
+If this callback is supplied instead of returning an array ref N:A:E:R objects
+it will return an AnyEvent condvar which can be waited upon for completion.
+
 =back
 
 Returns a Net::Amazon::EC2::DescribeInstanceAttributeResponse object
@@ -1936,16 +2574,31 @@ sub describe_instance_attribute {
 	my %args = validate( @_, {
 		InstanceId	=> { type => SCALAR },
 		Attribute	=> { type => SCALAR },
+		CallBack	=> { type => CODEREF, optional => 1 },
 	});
-	
+
+	my $CallBack = $args{CallBack};
+	if ($CallBack) {
+		return $self->_sign_async(Action => 'DescribeInstanceAttribute', %args,
+				CallBack => sub {
+			my $xml = shift;
+			$CallBack->($self->_describe_instance_attribute($xml, %args));
+		});
+	}
+
 	my $xml = $self->_sign(Action  => 'DescribeInstanceAttribute', %args);
+	return $self->_describe_instance_attribute($xml, %args);
+}
+
+sub _describe_instance_attribute {
+	my ($self, $xml, %args) = @_;
 
 	if ( grep { defined && length } $xml->{Errors} ) {
 		return $self->_parse_errors($xml);
 	}
 	else {
 		my $attribute_response;
-		
+
 		# Test to see which type of attribute we are looking for, to dictacte 
 		# how to create the Net::Amazon::EC2::DescribeInstanceAttributeResponse object.
 		if ( $args{Attribute} eq 'instanceType' ) {
@@ -2003,7 +2656,7 @@ sub describe_instance_attribute {
 					device_name	=> $block_item->{deviceName},
 					ebs			=> $ebs_mapping,
 				);
-				
+
 				push @$block_mappings, $block_device_mapping;
 			}
 
@@ -2013,7 +2666,7 @@ sub describe_instance_attribute {
 				block_device_mapping	=> $block_mappings,
 			);
 		}
-		
+
 		return $attribute_response;
 	}
 }
@@ -2029,6 +2682,15 @@ This method describes the keypairs available on this account. It takes the follo
 
 The name of the key to be described. Can be either a scalar or an array ref.
 
+=item CallBack (optional)
+
+The coderef which will be called when the HTTP request to EC2 has completed.
+This coderef should accept one parameter, the regular return value of this
+function in synchronous mode.
+
+If this callback is supplied instead of returning an array ref N:A:E:R objects
+it will return an AnyEvent condvar which can be waited upon for completion.
+
 =back
 
 Returns an array ref of Net::Amazon::EC2::DescribeKeyPairsResponse objects
@@ -2038,9 +2700,10 @@ Returns an array ref of Net::Amazon::EC2::DescribeKeyPairsResponse objects
 sub describe_key_pairs {
 	my $self = shift;
 	my %args = validate( @_, {
-		KeyName => { type => SCALAR | ARRAYREF, optional => 1 },
+		KeyName		=> { type => SCALAR | ARRAYREF, optional => 1 },
+		CallBack	=> { type => CODEREF, optional => 1 },
 	});
-	
+
 	# If we have a array ref of instances lets split them out into their InstanceId.n format
 	if (ref ($args{KeyName}) eq 'ARRAY') {
 		my $keynames	= delete $args{KeyName};
@@ -2050,13 +2713,27 @@ sub describe_key_pairs {
 			$count++;
 		}
 	}
-	
+
+	my $CallBack = $args{CallBack};
+	if ($CallBack) {
+		return $self->_sign_async(Action => 'DescribeKeyPairs', %args,
+				CallBack => sub {
+			my $xml = shift;
+			$CallBack->($self->_describe_key_pairs($xml));
+		});
+	}
+
 	my $xml = $self->_sign(Action  => 'DescribeKeyPairs', %args);
+	return $self->_describe_key_pairs($xml);
+}
+
+sub _describe_key_pairs {
+	my ($self, $xml) = @_;
 
 	if ( grep { defined && length } $xml->{Errors} ) {
 		return $self->_parse_errors($xml);
 	}
-	else {	
+	else {
 		my $key_pairs;
 
 		foreach my $pair (@{$xml->{keySet}{item}}) {
@@ -2064,7 +2741,7 @@ sub describe_key_pairs {
 				key_name		=> $pair->{keyName},
 				key_fingerprint	=> $pair->{keyFingerprint},
 			);
-			
+
 			push @$key_pairs, $key_pair;
 		}
 
@@ -2082,6 +2759,15 @@ Describes EC2 regions that are currently available to launch instances in for th
 
 The name of the region(s) to be described. Can be either a scalar or an array ref.
 
+=item CallBack (optional)
+
+The coderef which will be called when the HTTP request to EC2 has completed.
+This coderef should accept one parameter, the regular return value of this
+function in synchronous mode.
+
+If this callback is supplied instead of returning an array ref N:A:E:R objects
+it will return an AnyEvent condvar which can be waited upon for completion.
+
 =back
 
 Returns an array ref of Net::Amazon::EC2::Region objects
@@ -2092,6 +2778,7 @@ sub describe_regions {
 	my $self = shift;
 	my %args = validate( @_, {
 		RegionName	=> { type => ARRAYREF | SCALAR, optional => 1 },
+		CallBack	=> { type => CODEREF, optional => 1 },
 	});
 
 	# If we have a array ref of regions lets split them out into their RegionName.n format
@@ -2103,25 +2790,42 @@ sub describe_regions {
 			$count++;
 		}
 	}
-	
+
+	my $CallBack = delete($args{CallBack});
+	if ($CallBack) {
+		return $self->_sign_async(
+			Action		=> 'DescribeRegions',
+			%args,
+			CallBack	=> sub {
+				my $xml = shift;
+				$CallBack->($self->_describe_regions($xml));
+			},
+		);
+	}
+
 	my $xml = $self->_sign(Action  => 'DescribeRegions', %args);
-	
+	return $self->_describe_regions($xml);
+}
+
+sub _describe_regions {
+	my ($self, $xml) = @_;
+
 	if ( grep { defined && length } $xml->{Errors} ) {
 		return $self->_parse_errors($xml);
 	}
 	else {
- 		my $regions;
+		my $regions;
 
- 		foreach my $region_item (@{$xml->{regionInfo}{item}}) {
- 			my $region = Net::Amazon::EC2::Region->new(
- 				region_name			=> $region_item->{regionName},
- 				region_endpoint		=> $region_item->{regionEndpoint},
- 			);
- 			
- 			push @$regions, $region;
- 		}
- 		
- 		return $regions;
+		foreach my $region_item (@{$xml->{regionInfo}{item}}) {
+			my $region = Net::Amazon::EC2::Region->new(
+				region_name			=> $region_item->{regionName},
+				region_endpoint		=> $region_item->{regionEndpoint},
+			);
+
+			push @$regions, $region;
+		}
+
+		return $regions;
 	}
 }
 
@@ -2135,6 +2839,15 @@ Describes Reserved Instances that you purchased.
 
 The reserved instance id(s) to be described. Can be either a scalar or an array ref.
 
+=item CallBack (optional)
+
+The coderef which will be called when the HTTP request to EC2 has completed.
+This coderef should accept one parameter, the regular return value of this
+function in synchronous mode.
+
+If this callback is supplied instead of returning an array ref N:A:E:R objects
+it will return an AnyEvent condvar which can be waited upon for completion.
+
 =back
 
 Returns an array ref of Net::Amazon::EC2::ReservedInstance objects
@@ -2145,6 +2858,7 @@ sub describe_reserved_instances {
 	my $self = shift;
 	my %args = validate( @_, {
 		ReservedInstancesId	=> { type => ARRAYREF | SCALAR, optional => 1 },
+		CallBack			=> { type => CODEREF, optional => 1 },
 	});
 
 	# If we have a array ref of reserved instances lets split them out into their ReservedInstancesId.n format
@@ -2156,17 +2870,31 @@ sub describe_reserved_instances {
 			$count++;
 		}
 	}
-	
+
+	my $CallBack = $args{CallBack};
+	if ($CallBack) {
+		return $self->_sign_async(Action => 'DescribeReservedInstances', %args,
+				CallBack => sub {
+			my $xml = shift;
+			$CallBack->($self->_describe_reserved_instances($xml));
+		});
+	}
+
 	my $xml = $self->_sign(Action  => 'DescribeReservedInstances', %args);
-	
+	return $self->_describe_reserved_instances($xml);
+}
+
+sub _describe_reserved_instances {
+	my ($self, $xml) = @_;
+
 	if ( grep { defined && length } $xml->{Errors} ) {
 		return $self->_parse_errors($xml);
 	}
 	else {
- 		my $reserved_instances;
+		my $reserved_instances;
 
- 		foreach my $reserved_instance_item (@{$xml->{reservedInstancesSet}{item}}) {
- 			my $reserved_instance = Net::Amazon::EC2::ReservedInstance->new(
+		foreach my $reserved_instance_item (@{$xml->{reservedInstancesSet}{item}}) {
+			my $reserved_instance = Net::Amazon::EC2::ReservedInstance->new(
 				reserved_instances_id	=> $reserved_instance_item->{reservedInstancesId},
 				instance_type			=> $reserved_instance_item->{instanceType},
 				availability_zone		=> $reserved_instance_item->{availabilityZone},
@@ -2177,12 +2905,12 @@ sub describe_reserved_instances {
 				instance_count			=> $reserved_instance_item->{instanceCount},
 				product_description		=> $reserved_instance_item->{productDescription},
 				state					=> $reserved_instance_item->{state},
- 			);
- 			
- 			push @$reserved_instances, $reserved_instance;
- 		}
- 		
- 		return $reserved_instances;
+			);
+
+			push @$reserved_instances, $reserved_instance;
+		}
+
+		return $reserved_instances;
 	}
 }
 
@@ -2210,6 +2938,15 @@ The Availability Zone in which the Reserved Instance can be used.
 
 The Reserved Instance description.
 
+=item CallBack (optional)
+
+The coderef which will be called when the HTTP request to EC2 has completed.
+This coderef should accept one parameter, the regular return value of this
+function in synchronous mode.
+
+If this callback is supplied instead of returning an array ref N:A:E:R objects
+it will return an AnyEvent condvar which can be waited upon for completion.
+
 =back
 
 Returns an array ref of Net::Amazon::EC2::ReservedInstanceOffering objects
@@ -2223,18 +2960,36 @@ sub describe_reserved_instances_offerings {
 		InstanceType				=> { type => SCALAR, optional => 1 },
 		AvailabilityZone			=> { type => SCALAR, optional => 1 },
 		ProductDescription			=> { type => SCALAR, optional => 1 },
+		CallBack					=> { type => CODEREF, optional => 1 },
 	});
 
-	my $xml = $self->_sign(Action  => 'DescribeReservedInstancesOfferings', %args);
-	
+	my $CallBack = $args{CallBack};
+	if ($CallBack) {
+		return $self->_sign_async(
+				Action => 'DescribeReservedInstancesOfferings',
+				%args,
+				CallBack => sub {
+			my $xml = shift;
+			$CallBack->($self->_describe_reserved_instances_offerings($xml));
+		});
+	}
+
+	my $xml = $self->_sign(Action => 'DescribeReservedInstancesOfferings',
+																		%args);
+	return $self->_describe_reserved_instances_offerings($xml);
+}
+
+sub _describe_reserved_instances_offerings {
+	my ($self, $xml) = @_;
+
 	if ( grep { defined && length } $xml->{Errors} ) {
 		return $self->_parse_errors($xml);
 	}
 	else {
- 		my $reserved_instance_offerings;
+		my $reserved_instance_offerings;
 
- 		foreach my $reserved_instance_offering_item (@{$xml->{reservedInstancesOfferingsSet}{item}}) {
- 			my $reserved_instance_offering = Net::Amazon::EC2::ReservedInstanceOffering->new(
+		foreach my $reserved_instance_offering_item (@{$xml->{reservedInstancesOfferingsSet}{item}}) {
+			my $reserved_instance_offering = Net::Amazon::EC2::ReservedInstanceOffering->new(
 				reserved_instances_offering_id	=> $reserved_instance_offering_item->{reservedInstancesOfferingId},
 				instance_type					=> $reserved_instance_offering_item->{instanceType},
 				availability_zone				=> $reserved_instance_offering_item->{availabilityZone},
@@ -2245,12 +3000,12 @@ sub describe_reserved_instances_offerings {
 				instance_count					=> $reserved_instance_offering_item->{instanceCount},
 				product_description				=> $reserved_instance_offering_item->{productDescription},
 				state							=> $reserved_instance_offering_item->{state},
- 			);
- 			
- 			push @$reserved_instance_offerings, $reserved_instance_offering;
- 		}
- 		
- 		return $reserved_instance_offerings;
+			);
+
+			push @$reserved_instance_offerings, $reserved_instance_offering;
+		}
+
+		return $reserved_instance_offerings;
 	}
 }
 
@@ -2264,6 +3019,15 @@ This method describes the security groups available to this account. It takes th
 
 The name of the security group(s) to be described. Can be either a scalar or an array ref.
 
+=item CallBack (optional)
+
+The coderef which will be called when the HTTP request to EC2 has completed.
+This coderef should accept one parameter, the regular return value of this
+function in synchronous mode.
+
+If this callback is supplied instead of returning an array ref N:A:E:R objects
+it will return an AnyEvent condvar which can be waited upon for completion.
+
 =back
 
 Returns an array ref of Net::Amazon::EC2::SecurityGroup objects
@@ -2273,7 +3037,8 @@ Returns an array ref of Net::Amazon::EC2::SecurityGroup objects
 sub describe_security_groups {
 	my $self = shift;
 	my %args = validate( @_, {
-		GroupName => { type => SCALAR | ARRAYREF, optional => 1 },
+		GroupName	=> { type => SCALAR | ARRAYREF, optional => 1 },
+		CallBack	=> { type => CODEREF, optional => 1 },
 	});
 
 	# If we have a array ref of instances lets split them out into their InstanceId.n format
@@ -2285,9 +3050,23 @@ sub describe_security_groups {
 			$count++;
 		}
 	}
-	
+
+	my $CallBack = $args{CallBack};
+	if ($CallBack) {
+		return $self->_sign_async(Action => 'DescribeSecurityGroups', %args,
+				CallBack => sub {
+			my $xml = shift;
+			$CallBack->($self->_describe_security_groups($xml));
+		});
+	}
+
 	my $xml = $self->_sign(Action  => 'DescribeSecurityGroups', %args);
-	
+	return $self->_describe_security_groups($xml);
+}
+
+sub _describe_security_groups {
+	my ($self, $xml) = @_;
+
 	if ( grep { defined && length } $xml->{Errors} ) {
 		return $self->_parse_errors($xml);
 	}
@@ -2306,29 +3085,29 @@ sub describe_security_groups {
 				my $icmp_port	= $ip_perm->{icmpPort};
 				my $groups;
 				my $ip_ranges;
-				
+
 				if (grep { defined && length } $ip_perm->{groups}{item}) {
 					foreach my $grp (@{$ip_perm->{groups}{item}}) {
 						my $group = Net::Amazon::EC2::UserIdGroupPair->new(
 							user_id		=> $grp->{userId},
 							group_name	=> $grp->{groupName},
 						);
-						
+
 						push @$groups, $group;
 					}
 				}
-				
+
 				if (grep { defined && length } $ip_perm->{ipRanges}{item}) {
 					foreach my $rng (@{$ip_perm->{ipRanges}{item}}) {
 						my $ip_range = Net::Amazon::EC2::IpRange->new(
 							cidr_ip => $rng->{cidrIp},
 						);
-						
+
 						push @$ip_ranges, $ip_range;
 					}
 				}
 
-								
+
 				my $ip_permission = Net::Amazon::EC2::IpPermission->new(
 					ip_protocol			=> $ip_protocol,
 					group_name			=> $group_name,
@@ -2337,7 +3116,7 @@ sub describe_security_groups {
 					to_port				=> $to_port,
 					icmp_port			=> $icmp_port,
 				);
-				
+
 				if ($ip_ranges) {
 					$ip_permission->ip_ranges($ip_ranges);
 				}
@@ -2345,21 +3124,21 @@ sub describe_security_groups {
 				if ($groups) {
 					$ip_permission->groups($groups);
 				}
-				
+
 				push @$ip_permissions, $ip_permission;
 			}
-			
+
 			my $security_group = Net::Amazon::EC2::SecurityGroup->new(
 				owner_id			=> $owner_id,
 				group_name			=> $group_name,
 				group_description	=> $group_description,
 				ip_permissions		=> $ip_permissions,
 			);
-			
+
 			push @$security_groups, $security_group;
 		}
-		
-		return $security_groups;	
+
+		return $security_groups;
 	}
 }
 
@@ -2378,6 +3157,15 @@ it will describe the attributes of all the current snapshots.
 
 The attribute to describe, currently, the only valid attribute is createVolumePermission.
 
+=item CallBack (optional)
+
+The coderef which will be called when the HTTP request to EC2 has completed.
+This coderef should accept one parameter, the regular return value of this
+function in synchronous mode.
+
+If this callback is supplied instead of returning an array ref N:A:E:R objects
+it will return an AnyEvent condvar which can be waited upon for completion.
+
 =back
 
 Returns a Net::Amazon::EC2::SnapshotAttribute object.
@@ -2389,6 +3177,7 @@ sub describe_snapshot_attribute {
 	my %args = validate( @_, {
 		SnapshotId		=> { type => ARRAYREF | SCALAR, optional => 1 },
 		Attribute		=> { type => SCALAR },
+		CallBack		=> { type => CODEREF, optional => 1 },
 	});
 
 	# If we have a array ref of volumes lets split them out into their SnapshotId.n format
@@ -2400,34 +3189,48 @@ sub describe_snapshot_attribute {
 			$count++;
 		}
 	}
-	
+
+	my $CallBack = $args{CallBack};
+	if ($CallBack) {
+		return $self->_sign_async(Action => 'DescribeSnapshotAttribute', %args,
+				CallBack => sub {
+			my $xml = shift;
+			$CallBack->($self->_describe_snapshot_attribute($xml));
+		});
+	}
+
 	my $xml = $self->_sign(Action  => 'DescribeSnapshotAttribute', %args);
-	
+	return $self->_describe_snapshot_attribute($xml);
+}
+
+sub _describe_snapshot_attribute {
+	my ($self, $xml) = @_;
+
 	if ( grep { defined && length } $xml->{Errors} ) {
 		return $self->_parse_errors($xml);
 	}
 	else {
 		my $perms;
-		
+
 		unless ( grep { defined && length } $xml->{createVolumePermission} and ref $xml->{createVolumePermission} ne 'HASH') {
 			$perms = undef;
 		}
 
- 		foreach my $perm_item (@{$xml->{createVolumePermission}{item}}) {
- 			my $perm = Net::Amazon::EC2::CreateVolumePermission->new(
- 				user_id			=> $perm_item->{userId},
- 				group			=> $perm_item->{group},
- 			);
- 			
- 			push @$perms, $perm;
- 		}
+		foreach my $perm_item (@{$xml->{createVolumePermission}{item}}) {
+			my $perm = Net::Amazon::EC2::CreateVolumePermission->new(
+				user_id			=> $perm_item->{userId},
+				group			=> $perm_item->{group},
+			);
+
+			push @$perms, $perm;
+		}
 
 		my $snapshot_attribute = Net::Amazon::EC2::SnapshotAttribute->new(
 			snapshot_id		=> $xml->{snapshotId},
 			permissions		=> $perms,
 		);
- 		
- 		return $snapshot_attribute;
+
+		return $snapshot_attribute;
 	}
 }
 
@@ -2451,6 +3254,15 @@ The owner of the snapshot.
 
 A user who can create volumes from the snapshot.
 
+=item CallBack (optional)
+
+The coderef which will be called when the HTTP request to EC2 has completed.
+This coderef should accept one parameter, the regular return value of this
+function in synchronous mode.
+
+If this callback is supplied instead of returning an array ref N:A:E:R objects
+it will return an AnyEvent condvar which can be waited upon for completion.
+
 =back
 
 Returns an array ref of Net::Amazon::EC2::Snapshot objects.
@@ -2463,6 +3275,7 @@ sub describe_snapshots {
 		SnapshotId		=> { type => ARRAYREF | SCALAR, optional => 1 },
 		Owner			=> { type => SCALAR, optional => 1 },
 		RestorableBy	=> { type => SCALAR, optional => 1 },
+		CallBack		=> { type => CODEREF, optional => 1 },
 	});
 
 	# If we have a array ref of volumes lets split them out into their SnapshotId.n format
@@ -2474,16 +3287,30 @@ sub describe_snapshots {
 			$count++;
 		}
 	}
-	
+
+	my $CallBack = $args{CallBack};
+	if ($CallBack) {
+		return $self->_sign_async(Action => 'DescribeSnapshots', %args,
+				CallBack => sub {
+			my $xml = shift;
+			$CallBack->($self->_describe_snapshots($xml));
+		});
+	}
+
 	my $xml = $self->_sign(Action  => 'DescribeSnapshots', %args);
-	
+	return $self->_describe_snapshots($xml);
+}
+
+sub _describe_snapshots {
+	my ($self, $xml) = @_;
+
 	if ( grep { defined && length } $xml->{Errors} ) {
 		return $self->_parse_errors($xml);
 	}
 	else {
- 		my $snapshots;
+		my $snapshots;
 
- 		foreach my $snap (@{$xml->{snapshotSet}{item}}) {
+		foreach my $snap (@{$xml->{snapshotSet}{item}}) {
 			unless ( grep { defined && length } $snap->{description} and ref $snap->{description} ne 'HASH') {
 				$snap->{description} = undef;
 			}
@@ -2492,22 +3319,22 @@ sub describe_snapshots {
 				$snap->{progress} = undef;
 			}
 
- 			my $snapshot = Net::Amazon::EC2::Snapshot->new(
- 				snapshot_id		=> $snap->{snapshotId},
- 				status			=> $snap->{status},
- 				volume_id		=> $snap->{volumeId},
- 				start_time		=> $snap->{startTime},
- 				progress		=> $snap->{progress},
- 				owner_id		=> $snap->{ownerId},
- 				volume_size		=> $snap->{volumeSize},
- 				description		=> $snap->{description},
- 				owner_alias		=> $snap->{ownerAlias},
- 			);
- 			
- 			push @$snapshots, $snapshot;
- 		}
- 		
- 		return $snapshots;
+			my $snapshot = Net::Amazon::EC2::Snapshot->new(
+				snapshot_id		=> $snap->{snapshotId},
+				status			=> $snap->{status},
+				volume_id		=> $snap->{volumeId},
+				start_time		=> $snap->{startTime},
+				progress		=> $snap->{progress},
+				owner_id		=> $snap->{ownerId},
+				volume_size		=> $snap->{volumeSize},
+				description		=> $snap->{description},
+				owner_alias		=> $snap->{ownerAlias},
+			);
+
+			push @$snapshots, $snapshot;
+		}
+
+		return $snapshots;
 	}
 }
 
@@ -2522,6 +3349,15 @@ Describes the volumes currently created. It takes the following arguments:
 Either a scalar or array ref of volume id's can be passed in. If this isn't passed in
 it will describe all the current volumes.
 
+=item CallBack (optional)
+
+The coderef which will be called when the HTTP request to EC2 has completed.
+This coderef should accept one parameter, the regular return value of this
+function in synchronous mode.
+
+If this callback is supplied instead of returning an array ref N:A:E:R objects
+it will return an AnyEvent condvar which can be waited upon for completion.
+
 =back
 
 Returns an array ref of Net::Amazon::EC2::Volume objects.
@@ -2532,6 +3368,7 @@ sub describe_volumes {
 	my $self = shift;
 	my %args = validate( @_, {
 		VolumeId	=> { type => ARRAYREF | SCALAR, optional => 1 },
+		CallBack	=> { type => CODEREF, optional => 1 },
 	});
 
 	# If we have a array ref of volumes lets split them out into their Volume.n format
@@ -2543,10 +3380,23 @@ sub describe_volumes {
 			$count++;
 		}
 	}
-	
-	my $xml = $self->_sign(Action  => 'DescribeVolumes', %args);
 
-	
+	my $CallBack = $args{CallBack};
+	if ($CallBack) {
+		return $self->_sign_async(Action => 'DescribeVolumes', %args,
+				CallBack => sub {
+			my $xml = shift;
+			$CallBack->($self->_describe_volumes($xml));
+		});
+	}
+
+	my $xml = $self->_sign(Action  => 'DescribeVolumes', %args);
+	return $self->_describe_volumes($xml);
+}
+
+sub _describe_volumes {
+	my ($self, $xml) = @_;
+
 	if ( grep { defined && length } $xml->{Errors} ) {
 		return $self->_parse_errors($xml);
 	}
@@ -2558,20 +3408,20 @@ sub describe_volumes {
 			unless ( grep { defined && length } $volume_set->{snapshotId} and ref $volume_set->{snapshotId} ne 'HASH') {
 				$volume_set->{snapshotId} = undef;
 			}
-		
+
 			foreach my $attachment_set (@{$volume_set->{attachmentSet}{item}}) {
- 				my $attachment = Net::Amazon::EC2::Attachment->new(
- 					volume_id				=> $attachment_set->{volumeId},
- 					status					=> $attachment_set->{status},
- 					instance_id				=> $attachment_set->{instanceId},
- 					attach_time				=> $attachment_set->{attachTime},
- 					device					=> $attachment_set->{device},
- 					delete_on_termination	=> $attachment_set->{deleteOnTermination},
- 				);
- 				
- 				push @$attachments, $attachment;
+				my $attachment = Net::Amazon::EC2::Attachment->new(
+					volume_id				=> $attachment_set->{volumeId},
+					status					=> $attachment_set->{status},
+					instance_id				=> $attachment_set->{instanceId},
+					attach_time				=> $attachment_set->{attachTime},
+					device					=> $attachment_set->{device},
+					delete_on_termination	=> $attachment_set->{deleteOnTermination},
+				);
+
+				push @$attachments, $attachment;
 			}
-			
+
 			my $tags;
 			foreach my $tag_arr (@{$volume_set->{tagSet}{item}}) {
 				if ( ref $tag_arr->{value} eq "HASH" ) {
@@ -2596,10 +3446,10 @@ sub describe_volumes {
 				tag_set                 => $tags,
 				attachments		=> $attachments,
 			);
-			
+
 			push @$volumes, $volume;
 		}
-		
+
 		return $volumes;
 	}
 }
@@ -2618,6 +3468,15 @@ The name of the Filter.Name to be described. Can be either a scalar or an array 
 
 The name of the Filter.Value to be described. Can be either a scalar or an array ref.
 
+=item CallBack (optional)
+
+The coderef which will be called when the HTTP request to EC2 has completed.
+This coderef should accept one parameter, the regular return value of this
+function in synchronous mode.
+
+If this callback is supplied instead of returning an array ref N:A:E:R objects
+it will return an AnyEvent condvar which can be waited upon for completion.
+
 =back
 
 Returns an array ref of Net::Amazon::EC2::DescribeTags objects
@@ -2627,8 +3486,9 @@ Returns an array ref of Net::Amazon::EC2::DescribeTags objects
 sub describe_tags {
 	my $self = shift;
 	my %args = validate( @_, {
-		'Filter.Name'				=> { type => ARRAYREF | SCALAR, optional => 1 },
-		'Filter.Value'				=> { type => ARRAYREF | SCALAR, optional => 1 },
+		'Filter.Name'	=> { type => ARRAYREF | SCALAR, optional => 1 },
+		'Filter.Value'	=> { type => ARRAYREF | SCALAR, optional => 1 },
+		CallBack		=> { type => CODEREF, optional => 1 },
 	});
 
 	if (ref ($args{'Filter.Name'}) eq 'ARRAY') {
@@ -2648,12 +3508,26 @@ sub describe_tags {
 		}
 	}
 
+	my $CallBack = $args{CallBack};
+	if ($CallBack) {
+		return $self->_sign_async(Action => 'DescribeTags', %args,
+				CallBack => sub {
+			my $xml = shift;
+			$CallBack->($self->_describe_tags($xml));
+		});
+	}
+
 	my $xml = $self->_sign(Action  => 'DescribeTags', %args);
+	return $self->_describe_tags($xml);
+}
+
+sub _describe_tags {
+	my ($self, $xml) = @_;
 
 	if ( grep { defined && length } $xml->{Errors} ) {
 		return $self->_parse_errors($xml);
 	}
-	else {	
+	else {
 		my $tags;
 
 		foreach my $pair (@{$xml->{tagSet}{item}}) {
@@ -2663,7 +3537,7 @@ sub describe_tags {
 				key				=> $pair->{key},
 				value			=> $pair->{value},
 			);
-			
+
 			push @$tags, $tag;
 		}
 
@@ -2698,6 +3572,15 @@ WARNING: This can lead to data loss or a corrupted file system.
 	   opportunity to flush file system caches nor file system
 	   meta data.
 
+=item CallBack (optional)
+
+The coderef which will be called when the HTTP request to EC2 has completed.
+This coderef should accept one parameter, the regular return value of this
+function in synchronous mode.
+
+If this callback is supplied instead of returning an array ref N:A:E:R objects
+it will return an AnyEvent condvar which can be waited upon for completion.
+
 =back
 
 Returns a Net::Amazon::EC2::Attachment object containing the resulting volume status.
@@ -2711,11 +3594,25 @@ sub detach_volume {
 		InstanceId	=> { type => SCALAR, optional => 1 },
 		Device		=> { type => SCALAR, optional => 1 },
 		Force		=> { type => SCALAR, optional => 1 },
+		CallBack	=> { type => CODEREF, optional => 1 },
 	});
 
-	my $xml = $self->_sign(Action  => 'DetachVolume', %args);
+	my $CallBack = $args{CallBack};
+	if ($CallBack) {
+		return $self->_sign_async(Action => 'DetachVolume', %args,
+				CallBack => sub {
+			my $xml = shift;
+			$CallBack->($self->_detach_volume($xml));
+		});
+	}
 
-	
+	my $xml = $self->_sign(Action  => 'DetachVolume', %args);
+	return $self->_detach_volume($xml);
+}
+
+sub _detach_volume {
+	my ($self, $xml) = @_;
+
 	if ( grep { defined && length } $xml->{Errors} ) {
 		return $self->_parse_errors($xml);
 	}
@@ -2727,7 +3624,7 @@ sub detach_volume {
 			attach_time	=> $xml->{attachTime},
 			device		=> $xml->{device},
 		);
-		
+
 		return $attachment;
 	}
 }
@@ -2742,6 +3639,15 @@ Disassociates an elastic IP address with an instance. It takes the following arg
 
 The IP address to disassociate
 
+=item CallBack (optional)
+
+The coderef which will be called when the HTTP request to EC2 has completed.
+This coderef should accept one parameter, the regular return value of this
+function in synchronous mode.
+
+If this callback is supplied instead of returning an array ref N:A:E:R objects
+it will return an AnyEvent condvar which can be waited upon for completion.
+
 =back
 
 Returns true if the disassociation succeeded.
@@ -2751,10 +3657,25 @@ Returns true if the disassociation succeeded.
 sub disassociate_address {
 	my $self = shift;
 	my %args = validate( @_, {
-		PublicIp 		=> { type => SCALAR },
+		PublicIp	=> { type => SCALAR },
+		CallBack	=> { type => CODEREF, optional => 1 },
 	});
-	
+
+	my $CallBack = $args{CallBack};
+	if ($CallBack) {
+		return $self->_sign_async(Action => 'DisassociateAddress', %args,
+				CallBack => sub {
+			my $xml = shift;
+			$CallBack->($self->_disassociate_address($xml));
+		});
+	}
+
 	my $xml = $self->_sign(Action  => 'DisassociateAddress', %args);
+	return $self->_disassociate_address($xml);
+}
+
+sub _disassociate_address {
+	my ($self, $xml) = @_;
 
 	if ( grep { defined && length } $xml->{Errors} ) {
 		return $self->_parse_errors($xml);
@@ -2779,6 +3700,15 @@ This method gets the output from the virtual console for an instance.  It takes 
 
 A scalar containing a instance id.
 
+=item CallBack (optional)
+
+The coderef which will be called when the HTTP request to EC2 has completed.
+This coderef should accept one parameter, the regular return value of this
+function in synchronous mode.
+
+If this callback is supplied instead of returning an array ref N:A:E:R objects
+it will return an AnyEvent condvar which can be waited upon for completion.
+
 =back
 
 Returns a Net::Amazon::EC2::ConsoleOutput object.
@@ -2789,11 +3719,25 @@ sub get_console_output {
 	my $self = shift;
 	my %args = validate( @_, {
 		InstanceId	=> { type => SCALAR },
+		CallBack	=> { type => CODEREF, optional => 1 },
 	});
-	
-	
+
+	my $CallBack = $args{CallBack};
+	if ($CallBack) {
+		return $self->_sign_async(Action => 'GetConsoleOutput', %args,
+				CallBack => sub {
+			my $xml = shift;
+			$CallBack->($self->_get_console_output($xml));
+		});
+	}
+
 	my $xml = $self->_sign(Action  => 'GetConsoleOutput', %args);
-	
+	return $self->_get_console_output($xml);
+}
+
+sub _get_console_output {
+	my ($self, $xml) = @_;
+
 	if ( grep { defined && length } $xml->{Errors} ) {
 		return $self->_parse_errors($xml);
 	}
@@ -2803,7 +3747,7 @@ sub get_console_output {
 			timestamp	=> $xml->{timestamp},
 			output		=> decode_base64($xml->{output}),
 		);
-		
+
 		return $console_output;
 	}
 }
@@ -2818,6 +3762,15 @@ Retrieves the encrypted administrator password for the instances running Windows
 
 The Instance Id for which to retrieve the password.
 
+=item CallBack (optional)
+
+The coderef which will be called when the HTTP request to EC2 has completed.
+This coderef should accept one parameter, the regular return value of this
+function in synchronous mode.
+
+If this callback is supplied instead of returning an array ref N:A:E:R objects
+it will return an AnyEvent condvar which can be waited upon for completion.
+
 =back
 
 Returns a Net::Amazon::EC2::InstancePassword object
@@ -2828,10 +3781,25 @@ sub get_password_data {
 	my $self = shift;
 	my %args = validate( @_, {
 		instanceId	=> { type => SCALAR },
+		CallBack	=> { type => CODEREF, optional => 1 },
 	});
 
+	my $CallBack = $args{CallBack};
+	if ($CallBack) {
+		return $self->_sign_async(Action => 'GetPasswordData', %args,
+				CallBack => sub {
+			my $xml = shift;
+			$CallBack->($self->_get_password_data($xml));
+		});
+	}
+
 	my $xml = $self->_sign(Action  => 'GetPasswordData', %args);
-	
+	return $self->_get_password_data($xml);
+}
+
+sub _get_password_data {
+	my ($self, $xml) = @_;
+
 	if ( grep { defined && length } $xml->{Errors} ) {
 		return $self->_parse_errors($xml);
 	}
@@ -2841,8 +3809,8 @@ sub get_password_data {
 			timestamp		=> $xml->{timestamp},
 			password_data	=> $xml->{passwordData},
 		);
- 			
- 		return $instance_password;
+
+		return $instance_password;
 	}
 }
 
@@ -2876,6 +3844,15 @@ Groups you wish to add/remove from the attribute.  Currently there is only one U
 
 Attaches a product code to the AMI. Currently only one product code can be assigned to the AMI.  Once this is set it cannot be changed or reset.
 
+=item CallBack (optional)
+
+The coderef which will be called when the HTTP request to EC2 has completed.
+This coderef should accept one parameter, the regular return value of this
+function in synchronous mode.
+
+If this callback is supplied instead of returning an array ref N:A:E:R objects
+it will return an AnyEvent condvar which can be waited upon for completion.
+
 =back
 
 Returns 1 if the modification succeeds.
@@ -2886,16 +3863,30 @@ sub modify_image_attribute {
 	my $self = shift;
 	my %args = validate( @_, {
 		ImageId			=> { type => SCALAR },
-		Attribute 		=> { type => SCALAR },
+		Attribute		=> { type => SCALAR },
 		OperationType	=> { type => SCALAR, optional => 1 },
-		UserId 			=> { type => SCALAR | ARRAYREF, optional => 1 },
-		UserGroup 		=> { type => SCALAR | ARRAYREF, optional => 1 },
+		UserId			=> { type => SCALAR | ARRAYREF, optional => 1 },
+		UserGroup		=> { type => SCALAR | ARRAYREF, optional => 1 },
 		ProductCode		=> { type => SCALAR, optional => 1 },
+		CallBack		=> { type => CODEREF, optional => 1 },
 	});
-	
-	
+
+	my $CallBack = $args{CallBack};
+	if ($CallBack) {
+		return $self->_sign_async(Action => 'ModifyImageAttribute', %args,
+				CallBack => sub {
+			my $xml = shift;
+			$CallBack->($self->_modify_image_attribute($xml));
+		});
+	}
+
 	my $xml = $self->_sign(Action  => 'ModifyImageAttribute', %args);
-	
+	return $self->_modify_image_attribute($xml);
+}
+
+sub _modify_image_atttribute {
+	my ($self, $xml) = @_;
+
 	if ( grep { defined && length } $xml->{Errors} ) {
 		return $self->_parse_errors($xml);
 	}
@@ -2962,6 +3953,15 @@ For example:
         }
   );            
 
+=item CallBack (optional)
+
+The coderef which will be called when the HTTP request to EC2 has completed.
+This coderef should accept one parameter, the regular return value of this
+function in synchronous mode.
+
+If this callback is supplied instead of returning an array ref N:A:E:R objects
+it will return an AnyEvent condvar which can be waited upon for completion.
+
 =back
 
 Returns 1 if the modification succeeds.
@@ -2974,6 +3974,7 @@ sub modify_instance_attribute {
 		InstanceId	=> { type => SCALAR },
 		Attribute	=> { type => SCALAR },
 		Value		=> { type => SCALAR | HASHREF },
+		CallBack	=> { type => CODEREF, optional => 1 },
 	});
 
     if ( ref($args{'Value'}) eq "HASH" ) {
@@ -2981,8 +3982,22 @@ sub modify_instance_attribute {
         my $href = delete $args{'Value'};
         map { $args{$_} = $href->{$_} } keys %{$href};
     }
-	
+
+	my $CallBack = $args{CallBack};
+	if ($CallBack) {
+		return $self->_sign_async(Action => 'ModifyInstanceAttribute', %args,
+				CallBack => sub {
+			my $xml = shift;
+			$CallBack->($self->_modify_instance_attribute($xml));
+		});
+	}
+
 	my $xml = $self->_sign(Action  => 'ModifyInstanceAttribute', %args);
+	return $self->_modify_instance_attribute($xml);
+}
+
+sub _modify_instance_attribute {
+	my ($self, $xml) = @_;
 
 	if ( grep { defined && length } $xml->{Errors} ) {
 		return $self->_parse_errors($xml);
@@ -3025,6 +4040,15 @@ The attribute you wish to modify, right now the only attribute you can modify is
 
 The operation you wish to perform on the attribute. Right now just 'add' and 'remove' are supported.
 
+=item CallBack (optional)
+
+The coderef which will be called when the HTTP request to EC2 has completed.
+This coderef should accept one parameter, the regular return value of this
+function in synchronous mode.
+
+If this callback is supplied instead of returning an array ref N:A:E:R objects
+it will return an AnyEvent condvar which can be waited upon for completion.
+
 =back
 
 Returns 1 if the modification succeeds.
@@ -3039,11 +4063,25 @@ sub modify_snapshot_attribute {
 		UserGroup		=> { type => SCALAR, optional => 1 },
 		Attribute		=> { type => SCALAR },
 		OperationType	=> { type => SCALAR },
+		CallBack		=> { type => CODEREF, optional => 1 },
 	});
-	
-	
+
+	my $CallBack = $args{CallBack};
+	if ($CallBack) {
+		return $self->_sign_async(Action => 'ModifySnapshotAttribute', %args,
+				CallBack => sub {
+			my $xml = shift;
+			$CallBack->($self->_modify_snapshot_attribute($xml));
+		});
+	}
+
 	my $xml = $self->_sign(Action  => 'ModifySnapshotAttribute', %args);
-	
+	return $self->_modify_snapshot_attribute($xml);
+}
+
+sub _modify_snapshot_attribute {
+	my ($self, $xml) = @_;
+
 	if ( grep { defined && length } $xml->{Errors} ) {
 		return $self->_parse_errors($xml);
 	}
@@ -3067,6 +4105,15 @@ Enables monitoring for a running instance. For more information, refer to the Am
 
 The instance id(s) to monitor. Can be a scalar or an array ref
 
+=item CallBack (optional)
+
+The coderef which will be called when the HTTP request to EC2 has completed.
+This coderef should accept one parameter, the regular return value of this
+function in synchronous mode.
+
+If this callback is supplied instead of returning an array ref N:A:E:R objects
+it will return an AnyEvent condvar which can be waited upon for completion.
+
 =back
 
 Returns an array ref of Net::Amazon::EC2::MonitoredInstance objects
@@ -3077,6 +4124,7 @@ sub monitor_instances {
 	my $self = shift;
 	my %args = validate( @_, {
 		InstanceId	=> { type => ARRAYREF | SCALAR, optional => 1 },
+		CallBack	=> { type => CODEREF, optional => 1 },
 	});
 
 	# If we have a array ref of instances lets split them out into their InstanceId.n format
@@ -3088,25 +4136,39 @@ sub monitor_instances {
 			$count++;
 		}
 	}
-	
+
+	my $CallBack = $args{CallBack};
+	if ($CallBack) {
+		return $self->_sign_async(Action => 'MonitorInstances', %args,
+				CallBack => sub {
+			my $xml = shift;
+			$CallBack->($self->_monitor_instances($xml));
+		});
+	}
+
 	my $xml = $self->_sign(Action  => 'MonitorInstances', %args);
-	
+	return $self->_monitor_instances($xml);
+}
+
+sub _monitor_instances {
+	my ($self, $xml) = @_;
+
 	if ( grep { defined && length } $xml->{Errors} ) {
 		return $self->_parse_errors($xml);
 	}
 	else {
- 		my $monitored_instances;
+		my $monitored_instances;
 
- 		foreach my $monitored_instance_item (@{$xml->{instancesSet}{item}}) {
- 			my $monitored_instance = Net::Amazon::EC2::ReservedInstance->new(
+		foreach my $monitored_instance_item (@{$xml->{instancesSet}{item}}) {
+			my $monitored_instance = Net::Amazon::EC2::ReservedInstance->new(
 				instance_id	=> $monitored_instance_item->{instanceId},
 				state		=> $monitored_instance_item->{monitoring}{state},
- 			);
- 			
- 			push @$monitored_instances, $monitored_instance;
- 		}
- 		
- 		return $monitored_instances;
+			);
+
+			push @$monitored_instances, $monitored_instance;
+		}
+
+		return $monitored_instances;
 	}
 }
 
@@ -3129,6 +4191,15 @@ The number of Reserved Instances to purchase (default is 1). Can be either a sca
 NOTE NOTE NOTE, the array ref needs to line up with the InstanceCount if you want to pass that in, so that 
 the right number of instances are started of the right instance offering
 
+=item CallBack (optional)
+
+The coderef which will be called when the HTTP request to EC2 has completed.
+This coderef should accept one parameter, the regular return value of this
+function in synchronous mode.
+
+If this callback is supplied instead of returning an array ref N:A:E:R objects
+it will return an AnyEvent condvar which can be waited upon for completion.
+
 =back
 
 Returns 1 if the reservations succeeded.
@@ -3140,8 +4211,9 @@ sub purchase_reserved_instances_offering {
 	my %args = validate( @_, {
 		ReservedInstancesOfferingId	=> { type => ARRAYREF | SCALAR },
 		InstanceCount				=> { type => ARRAYREF | SCALAR, optional => 1 },
+		CallBack					=> { type => CODEREF, optional => 1 },
 	});
-	
+
 	# If we have a array ref of reserved instance offerings lets split them out into their ReservedInstancesOfferingId.n format
 	if (ref ($args{ReservedInstancesOfferingId}) eq 'ARRAY') {
 		my $reserved_instance_offering_ids = delete $args{ReservedInstancesOfferingId};
@@ -3161,9 +4233,25 @@ sub purchase_reserved_instances_offering {
 			$count++;
 		}
 	}
-	
-	my $xml = $self->_sign(Action  => 'PurchaseReservedInstancesOffering', %args);
-	
+
+	my $CallBack = $args{CallBack};
+	if ($CallBack) {
+		return $self->_sign_async(Action => 'PurchaseReservedInstancesOffering',
+				%args,
+				CallBack => sub {
+			my $xml = shift;
+			$CallBack->($self->_purchase_reserved_instances_offering($xml));
+		});
+	}
+
+	my $xml = $self->_sign(Action => 'PurchaseReservedInstancesOffering',
+																		%args);
+	return $self->_purchase_reserved_instances_offering($xml);
+}
+
+sub _purchase_reserved_instances_offering {
+	my ($self, $xml) = @_;
+
 	if ( grep { defined && length } $xml->{Errors} ) {
 		return $self->_parse_errors($xml);
 	}
@@ -3187,6 +4275,15 @@ This method reboots an instance.  It takes the following parameters:
 
 Instance Id of the instance you wish to reboot. Can be either a scalar or array ref of instances to reboot.
 
+=item CallBack (optional)
+
+The coderef which will be called when the HTTP request to EC2 has completed.
+This coderef should accept one parameter, the regular return value of this
+function in synchronous mode.
+
+If this callback is supplied instead of returning an array ref N:A:E:R objects
+it will return an AnyEvent condvar which can be waited upon for completion.
+
 =back
 
 Returns 1 if the reboot succeeded.
@@ -3197,8 +4294,9 @@ sub reboot_instances {
 	my $self = shift;
 	my %args = validate( @_, {
 		InstanceId	=> { type => SCALAR },
+		CallBack	=> { type => CODEREF, optional => 1 },
 	});
-	
+
 	# If we have a array ref of instances lets split them out into their InstanceId.n format
 	if (ref ($args{InstanceId}) eq 'ARRAY') {
 		my $instance_ids = delete $args{InstanceId};
@@ -3208,9 +4306,23 @@ sub reboot_instances {
 			$count++;
 		}
 	}
-	
+
+	my $CallBack = $args{CallBack};
+	if ($CallBack) {
+		return $self->_sign_async(Action => 'RebootInstances', %args,
+				CallBack => sub {
+			my $xml = shift;
+			$CallBack->($self->_reboot_instances($xml));
+		});
+	}
+
 	my $xml = $self->_sign(Action  => 'RebootInstances', %args);
-	
+	return $self->_reboot_instances($xml);
+}
+
+sub _reboot_instances {
+	my ($self, $xml) = @_;
+
 	if ( grep { defined && length } $xml->{Errors} ) {
 		return $self->_parse_errors($xml);
 	}
@@ -3276,6 +4388,15 @@ This needs to be a data structure like this:
 	...
 ]	
 
+=item CallBack (optional)
+
+The coderef which will be called when the HTTP request to EC2 has completed.
+This coderef should accept one parameter, the regular return value of this
+function in synchronous mode.
+
+If this callback is supplied instead of returning an array ref N:A:E:R objects
+it will return an AnyEvent condvar which can be waited upon for completion.
+
 =back
 
 Returns the image id of the new image on EC2.
@@ -3293,9 +4414,9 @@ sub register_image {
 		RamdiskId			=> { type => SCALAR, optional => 1 },
 		RootDeviceName		=> { type => SCALAR, optional => 1 },
 		BlockDeviceMapping	=> { type => ARRAYREF, optional => 1 },
+		CallBack			=> { type => CODEREF, optional => 1 },
 	});
 
-	
 	# If we have a array ref of block devices, we need to split them up
 	if (ref ($args{BlockDeviceMapping}) eq 'ARRAY') {
 		my $block_devices = delete $args{BlockDeviceMapping};
@@ -3311,7 +4432,21 @@ sub register_image {
 		}
 	}
 
-	my $xml	= $self->_sign(Action  => 'RegisterImage', %args);
+	my $CallBack = $args{CallBack};
+	if ($CallBack) {
+		return $self->_sign_async(Action => 'RegisterImage', %args,
+				CallBack => sub {
+			my $xml = shift;
+			$CallBack->($self->_register_image($xml));
+		});
+	}
+
+	my $xml = $self->_sign(Action  => 'RegisterImage', %args);
+	return $self->_register_image($xml);
+}
+
+sub _register_image {
+	my ($self, $xml) = @_;
 
 	if ( grep { defined && length } $xml->{Errors} ) {
 		return $self->_parse_errors($xml);
@@ -3331,6 +4466,15 @@ Releases an allocated IP address. It takes the following arguments:
 
 The IP address to release
 
+=item CallBack (optional)
+
+The coderef which will be called when the HTTP request to EC2 has completed.
+This coderef should accept one parameter, the regular return value of this
+function in synchronous mode.
+
+If this callback is supplied instead of returning an array ref N:A:E:R objects
+it will return an AnyEvent condvar which can be waited upon for completion.
+
 =back
 
 Returns true if the releasing succeeded.
@@ -3340,10 +4484,25 @@ Returns true if the releasing succeeded.
 sub release_address {
 	my $self = shift;
 	my %args = validate( @_, {
-		PublicIp 		=> { type => SCALAR },
+		PublicIp	=> { type => SCALAR },
+		CallBack	=> { type => CODEREF, optional => 1 },
 	});
-	
+
+	my $CallBack = $args{CallBack};
+	if ($CallBack) {
+		return $self->_sign_async(Action => 'ReleaseAddress', %args,
+				CallBack => sub {
+			my $xml = shift;
+			$CallBack->($self->_release_address($xml));
+		});
+	}
+
 	my $xml = $self->_sign(Action  => 'ReleaseAddress', %args);
+	return $self->_release_address($xml);
+}
+
+sub _release_address {
+	my ($self, $xml) = @_;
 
 	if ( grep { defined && length } $xml->{Errors} ) {
 		return $self->_parse_errors($xml);
@@ -3373,6 +4532,15 @@ The image id of the AMI you wish to reset the attributes on.
 
 The attribute you want to reset.
 
+=item CallBack (optional)
+
+The coderef which will be called when the HTTP request to EC2 has completed.
+This coderef should accept one parameter, the regular return value of this
+function in synchronous mode.
+
+If this callback is supplied instead of returning an array ref N:A:E:R objects
+it will return an AnyEvent condvar which can be waited upon for completion.
+
 =back
 
 Returns 1 if the attribute reset succeeds.
@@ -3382,11 +4550,26 @@ Returns 1 if the attribute reset succeeds.
 sub reset_image_attribute {
 	my $self = shift;
 	my %args = validate( @_, {
-		ImageId			=> { type => SCALAR },
-		Attribute 		=> { type => SCALAR },
+		ImageId		=> { type => SCALAR },
+		Attribute	=> { type => SCALAR },
+		CallBack	=> { type => CODEREF, optional => 1 },
 	});
-	
+
+	my $CallBack = $args{CallBack};
+	if ($CallBack) {
+		return $self->_sign_async(Action => 'ResetImageAttribute', %args,
+				CallBack => sub {
+			my $xml = shift;
+			$CallBack->($self->_reset_image_attribute($xml));
+		});
+	}
+
 	my $xml = $self->_sign(Action  => 'ResetImageAttribute', %args);
+	return $self->_reset_image_attribute($xml);
+}
+
+sub _reset_image_attribute {
+	my ($self, $xml) = @_;
 
 	if ( grep { defined && length } $xml->{Errors} ) {
 		return $self->_parse_errors($xml);
@@ -3423,6 +4606,15 @@ The attribute we want to reset. Valid values are:
 
 =back 
 
+=item CallBack (optional)
+
+The coderef which will be called when the HTTP request to EC2 has completed.
+This coderef should accept one parameter, the regular return value of this
+function in synchronous mode.
+
+If this callback is supplied instead of returning an array ref N:A:E:R objects
+it will return an AnyEvent condvar which can be waited upon for completion.
+
 =back
 
 Returns 1 if the reset succeeds.
@@ -3432,11 +4624,26 @@ Returns 1 if the reset succeeds.
 sub reset_instance_attribute {
 	my $self = shift;
 	my %args = validate( @_, {
-		InstanceId		=> { type => SCALAR },
-		Attribute 		=> { type => SCALAR },
+		InstanceId	=> { type => SCALAR },
+		Attribute	=> { type => SCALAR },
+		CallBack	=> { type => CODEREF, optional => 1 },
 	});
-	
+
+	my $CallBack = $args{CallBack};
+	if ($CallBack) {
+		return $self->_sign_async(Action => 'RestInstanceAttribute', %args,
+				CallBack => sub {
+			my $xml = shift;
+			$CallBack->($self->_reset_instance_attribute($xml));
+		});
+	}
+
 	my $xml = $self->_sign(Action  => 'ResetInstanceAttribute', %args);
+	return $self->_reset_instance_attribute($xml);
+}
+
+sub _reset_instance_attribute {
+	my ($self, $xml) = @_;
 
 	if ( grep { defined && length } $xml->{Errors} ) {
 		return $self->_parse_errors($xml);
@@ -3468,6 +4675,15 @@ The snapshot id of the snapshot you wish to reset the attributes on.
 The attribute you want to reset (currently "CreateVolumePermission" is the only
 valid attribute).
 
+=item CallBack (optional)
+
+The coderef which will be called when the HTTP request to EC2 has completed.
+This coderef should accept one parameter, the regular return value of this
+function in synchronous mode.
+
+If this callback is supplied instead of returning an array ref N:A:E:R objects
+it will return an AnyEvent condvar which can be waited upon for completion.
+
 =back
 
 Returns 1 if the attribute reset succeeds.
@@ -3479,9 +4695,24 @@ sub reset_snapshot_attribute {
 	my %args = validate( @_, {
 		SnapshotId	=> { type => SCALAR },
 		Attribute	=> { type => SCALAR },
+		CallBack	=> { type => CODEREF, optional => 1 },
 	});
-	
+
+	my $CallBack = $args{CallBack};
+	if ($CallBack) {
+		return $self->_sign_async(Action => 'ResetSnapshotAttribute', %args,
+				CallBack => sub {
+			my $xml = shift;
+			$CallBack->($self->_reset_snapshot_attribute($xml));
+		});
+	}
+
 	my $xml = $self->_sign(Action  => 'ResetSnapshotAttribute', %args);
+	return $self->_reset_snapshot_attribute($xml);
+}
+
+sub _reset_snapshot_attribute {
+	my ($self, $xml) = @_;
 
 	if ( grep { defined && length } $xml->{Errors} ) {
 		return $self->_parse_errors($xml);
@@ -3530,6 +4761,15 @@ End of port range to revoke access from.
 
 The CIDR IP space we are revoking access from.
 
+=item CallBack (optional)
+
+The coderef which will be called when the HTTP request to EC2 has completed.
+This coderef should accept one parameter, the regular return value of this
+function in synchronous mode.
+
+If this callback is supplied instead of returning an array ref N:A:E:R objects
+it will return an AnyEvent condvar which can be waited upon for completion.
+
 =back
 
 Revoking a rule can be done in two ways: revoking a source group name + source group owner id, or, by Protocol + start port + end port + CIDR IP.  The two are mutally exclusive.
@@ -3541,25 +4781,39 @@ Returns 1 if rule is revoked successfully.
 sub revoke_security_group_ingress {
 	my $self = shift;
 	my %args = validate( @_, {
-								GroupName					=> { type => SCALAR },
-								SourceSecurityGroupName 	=> { 
-																	type => SCALAR,
-																	depends => ['SourceSecurityGroupOwnerId'],
-																	optional => 1 ,
-								},
-								SourceSecurityGroupOwnerId	=> { type => SCALAR, optional => 1 },
-								IpProtocol 					=> { 
-																	type => SCALAR,
-																	depends => ['FromPort', 'ToPort', 'CidrIp'],
-																	optional => 1 
-								},
-								FromPort 					=> { type => SCALAR, optional => 1 },
-								ToPort 						=> { type => SCALAR, optional => 1 },
-								CidrIp						=> { type => SCALAR, optional => 1 },
+		GroupName					=> { type => SCALAR },
+		SourceSecurityGroupName		=> {
+			type => SCALAR,
+			depends => ['SourceSecurityGroupOwnerId'],
+			optional => 1,
+		},
+		SourceSecurityGroupOwnerId	=> { type => SCALAR, optional => 1 },
+		IpProtocol					=> {
+			type => SCALAR,
+			depends => ['FromPort', 'ToPort', 'CidrIp'],
+			optional => 1,
+		},
+		FromPort					=> { type => SCALAR, optional => 1 },
+		ToPort						=> { type => SCALAR, optional => 1 },
+		CidrIp						=> { type => SCALAR, optional => 1 },
+		CallBack					=> { type => CODEREF, optional => 1 },
 	});
-	
-	
+
+	my $CallBack = $args{CallBack};
+	if ($CallBack) {
+		return $self->_sign_async(Action => 'RevokeSecurityGroupIngress', %args,
+				CallBack => sub {
+			my $xml = shift;
+			$CallBack->($self->_revoke_security_group_ingress($xml));
+		});
+	}
+
 	my $xml = $self->_sign(Action  => 'RevokeSecurityGroupIngress', %args);
+	return $self->_revoke_security_group_ingress($xml);
+}
+
+sub _revoke_security_group_ingress {
+	my ($self, $xml) = @_;
 
 	if ( grep { defined && length } $xml->{Errors} ) {
 		return $self->_parse_errors($xml);
@@ -3726,11 +4980,20 @@ Whether the instance is optimized for EBS I/O.
 
 Specifies the private IP address to use when launching an Amazon VPC instance.
 
+=item CallBack (optional)
+
+The coderef which will be called when the HTTP request to EC2 has completed.
+This coderef should accept one parameter, the regular return value of this
+function in synchronous mode.
+
+If this callback is supplied instead of returning an array ref N:A:E:R objects
+it will return an AnyEvent condvar which can be waited upon for completion.
+
 =back
 
 Returns a Net::Amazon::EC2::ReservationInfo object
 
-=cut 
+=cut
 
 sub run_instances {
 	my $self = shift;
@@ -3762,8 +5025,9 @@ sub run_instances {
 		ClientToken										=> { type => SCALAR, optional => 1 },
 		EbsOptimized									=> { type => SCALAR, optional => 1 },
 		PrivateIpAddress								=> { type => SCALAR, optional => 1 },
+		CallBack										=> { type => CODEREF, optional => 1 },
 	});
-	
+
 	# If we have a array ref of instances lets split them out into their SecurityGroup.n format
 	if (ref ($args{SecurityGroup}) eq 'ARRAY') {
 		my $security_groups	= delete $args{SecurityGroup};
@@ -3834,8 +5098,22 @@ sub run_instances {
 		}
 	}
 
+	my $CallBack = $args{CallBack};
+	if ($CallBack) {
+		return $self->_sign_async(Action => 'RunInstances', %args,
+				CallBack => sub {
+			my $xml = shift;
+			$CallBack->($self->_run_instances($xml));
+		});
+	}
+
 	my $xml = $self->_sign(Action  => 'RunInstances', %args);
-	
+	return $self->_run_instances($xml);
+}
+
+sub _run_instances {
+	my ($self, $xml) = @_;
+
 	if ( grep { defined && length } $xml->{Errors} ) {
 		return $self->_parse_errors($xml);
 	}
@@ -3855,11 +5133,11 @@ sub run_instances {
 				code	=> $instance_elem->{instanceState}{code},
 				name	=> $instance_elem->{instanceState}{name},
 			);
-			
+
 			my $product_codes;
 			my $state_reason;
 			my $block_device_mappings;
-			
+
 			if (grep { defined && length } $instance_elem->{productCodes} ) {
 				foreach my $pc (@{$instance_elem->{productCodes}{item}}) {
 					my $product_code = Net::Amazon::EC2::ProductCode->new( product_code => $pc->{productCode} );
@@ -3892,9 +5170,9 @@ sub run_instances {
 						volume_id				=> $bdm->{ebs}{volumeId},
 						status					=> $bdm->{ebs}{status},
 						attach_time				=> $bdm->{ebs}{attachTime},
-						delete_on_termination	=> $bdm->{ebs}{deleteOnTermination},							
+						delete_on_termination	=> $bdm->{ebs}{deleteOnTermination},
 					);
-					
+
 					my $block_device_mapping = Net::Amazon::EC2::BlockDeviceMapping->new(
 						ebs						=> $ebs_block_device_mapping,
 						device_name				=> $bdm->{deviceName},
@@ -3904,7 +5182,7 @@ sub run_instances {
 			}
 
 			my $placement_response = Net::Amazon::EC2::PlacementResponse->new( availability_zone => $instance_elem->{placement}{availabilityZone} );
-			
+
 			my $running_instance = Net::Amazon::EC2::RunningInstances->new(
 				ami_launch_index		=> $instance_elem->{amiLaunchIndex},
 				dns_name				=> $instance_elem->{dnsName},
@@ -3935,17 +5213,17 @@ sub run_instances {
 			if ($product_codes) {
 				$running_instance->product_codes($product_codes);
 			}
-			
+
 			push @$running_instances, $running_instance;
 		}
-		
+
 		my $reservation = Net::Amazon::EC2::ReservationInfo->new(
 			reservation_id	=> $xml->{reservationId},
 			owner_id		=> $xml->{ownerId},
 			group_set		=> $group_sets,
 			instances_set	=> $running_instances,
 		);
-		
+
 		return $reservation;
 	}
 }
@@ -3960,6 +5238,15 @@ Starts an instance that uses an Amazon EBS volume as its root device.
 
 Either a scalar or an array ref can be passed in (containing instance ids to be started).
 
+=item CallBack (optional)
+
+The coderef which will be called when the HTTP request to EC2 has completed.
+This coderef should accept one parameter, the regular return value of this
+function in synchronous mode.
+
+If this callback is supplied instead of returning an array ref N:A:E:R objects
+it will return an AnyEvent condvar which can be waited upon for completion.
+
 =back
 
 Returns an array ref of Net::Amazon::EC2::InstanceStateChange objects.
@@ -3970,8 +5257,9 @@ sub start_instances {
 	my $self = shift;
 	my %args = validate( @_, {
 		InstanceId	=> { type => SCALAR | ARRAYREF },
+		CallBack	=> { type => CODEREF, optional => 1 },
 	});
-	
+
 	# If we have a array ref of instances lets split them out into their InstanceId.n format
 	if (ref ($args{InstanceId}) eq 'ARRAY') {
 		my $instance_ids	= delete $args{InstanceId};
@@ -3981,20 +5269,35 @@ sub start_instances {
 			$count++;
 		}
 	}
-	
-	my $xml = $self->_sign(Action  => 'StartInstances', %args);	
+
+	my $CallBack = $args{CallBack};
+	if ($CallBack) {
+		return $self->_sign_async(Action => 'StartInstances', %args,
+				CallBack => sub {
+			my $xml = shift;
+			$CallBack->($self->_start_instances($xml));
+		});
+	}
+
+	my $xml = $self->_sign(Action  => 'StartInstances', %args);
+	return $self->_start_instances($xml);
+}
+
+sub _start_instances {
+	my ($self, $xml) = @_;
+
 	if ( grep { defined && length } $xml->{Errors} ) {
 		return $self->_parse_errors($xml);
 	}
 	else {
 		my $started_instances;
-		
+
 		foreach my $inst (@{$xml->{instancesSet}{item}}) {
 			my $previous_state = Net::Amazon::EC2::InstanceState->new(
 				code	=> $inst->{previousState}{code},
 				name	=> $inst->{previousState}{name},
 			);
-			
+
 			my $current_state = Net::Amazon::EC2::InstanceState->new(
 				code	=> $inst->{currentState}{code},
 				name	=> $inst->{currentState}{name},
@@ -4005,10 +5308,10 @@ sub start_instances {
 				previous_state	=> $previous_state,
 				current_state	=> $current_state,
 			);
-			
+
 			push @$started_instances, $started_instance;
 		}
-		
+
 		return $started_instances;
 	}
 }
@@ -4031,6 +5334,15 @@ system check and repair procedures. This option is not recommended for Windows i
 
 The default is false.
 
+=item CallBack (optional)
+
+The coderef which will be called when the HTTP request to EC2 has completed.
+This coderef should accept one parameter, the regular return value of this
+function in synchronous mode.
+
+If this callback is supplied instead of returning an array ref N:A:E:R objects
+it will return an AnyEvent condvar which can be waited upon for completion.
+
 =back
 
 Returns an array ref of Net::Amazon::EC2::InstanceStateChange objects.
@@ -4042,8 +5354,9 @@ sub stop_instances {
 	my %args = validate( @_, {
 		InstanceId	=> { type => SCALAR | ARRAYREF },
 		Force		=> { type => SCALAR, optional => 1 },
+		CallBack	=> { type => CODEREF, optional => 1 },
 	});
-	
+
 	# If we have a array ref of instances lets split them out into their InstanceId.n format
 	if (ref ($args{InstanceId}) eq 'ARRAY') {
 		my $instance_ids	= delete $args{InstanceId};
@@ -4053,20 +5366,35 @@ sub stop_instances {
 			$count++;
 		}
 	}
-	
-	my $xml = $self->_sign(Action  => 'StopInstances', %args);	
+
+	my $CallBack = $args{CallBack};
+	if ($CallBack) {
+		return $self->_sign_async(Action => 'StopInstances', %args,
+				CallBack => sub {
+			my $xml = shift;
+			$CallBack->($self->_stop_instances($xml));
+		});
+	}
+
+	my $xml = $self->_sign(Action  => 'StopInstances', %args);
+	return $self->_stop_instances($xml);
+}
+
+sub _stop_instances {
+	my ($self, $xml) = @_;
+
 	if ( grep { defined && length } $xml->{Errors} ) {
 		return $self->_parse_errors($xml);
 	}
 	else {
 		my $stopped_instances;
-		
+
 		foreach my $inst (@{$xml->{instancesSet}{item}}) {
 			my $previous_state = Net::Amazon::EC2::InstanceState->new(
 				code	=> $inst->{previousState}{code},
 				name	=> $inst->{previousState}{name},
 			);
-			
+
 			my $current_state = Net::Amazon::EC2::InstanceState->new(
 				code	=> $inst->{currentState}{code},
 				name	=> $inst->{currentState}{name},
@@ -4077,10 +5405,10 @@ sub stop_instances {
 				previous_state	=> $previous_state,
 				current_state	=> $current_state,
 			);
-			
+
 			push @$stopped_instances, $stopped_instance;
 		}
-		
+
 		return $stopped_instances;
 	}
 }
@@ -4095,6 +5423,15 @@ This method shuts down instance(s) passed into it. It takes the following parame
 
 Either a scalar or an array ref can be passed in (containing instance ids)
 
+=item CallBack (optional)
+
+The coderef which will be called when the HTTP request to EC2 has completed.
+This coderef should accept one parameter, the regular return value of this
+function in synchronous mode.
+
+If this callback is supplied instead of returning an array ref N:A:E:R objects
+it will return an AnyEvent condvar which can be waited upon for completion.
+
 =back
 
 Returns an array ref of Net::Amazon::EC2::InstanceStateChange objects.
@@ -4104,9 +5441,10 @@ Returns an array ref of Net::Amazon::EC2::InstanceStateChange objects.
 sub terminate_instances {
 	my $self = shift;
 	my %args = validate( @_, {
-		InstanceId => { type => SCALAR | ARRAYREF },
+		InstanceId	=> { type => SCALAR | ARRAYREF },
+		CallBack	=> { type => CODEREF, optional => 1 },
 	});
-	
+
 	# If we have a array ref of instances lets split them out into their InstanceId.n format
 	if (ref ($args{InstanceId}) eq 'ARRAY') {
 		my $instance_ids	= delete $args{InstanceId};
@@ -4116,20 +5454,35 @@ sub terminate_instances {
 			$count++;
 		}
 	}
-	
-	my $xml = $self->_sign(Action  => 'TerminateInstances', %args);	
+
+	my $CallBack = $args{CallBack};
+	if ($CallBack) {
+		return $self->_sign_async(Action => 'TerminateInstances', %args,
+				CallBack => sub {
+			my $xml = shift;
+			$CallBack->($self->_terminate_instances($xml));
+		});
+	}
+
+	my $xml = $self->_sign(Action  => 'TerminateInstances', %args);
+	return $self->_terminate_instances($xml);
+}
+
+sub _terminate_instances {
+	my ($self, $xml) = @_;
+
 	if ( grep { defined && length } $xml->{Errors} ) {
 		return $self->_parse_errors($xml);
 	}
 	else {
 		my $terminated_instances;
-		
+
 		foreach my $inst (@{$xml->{instancesSet}{item}}) {
 			my $previous_state = Net::Amazon::EC2::InstanceState->new(
 				code	=> $inst->{previousState}{code},
 				name	=> $inst->{previousState}{name},
 			);
-			
+
 			my $current_state = Net::Amazon::EC2::InstanceState->new(
 				code	=> $inst->{currentState}{code},
 				name	=> $inst->{currentState}{name},
@@ -4144,10 +5497,10 @@ sub terminate_instances {
 				previous_state	=> $previous_state,
 				current_state	=> $current_state,
 			);
-			
+
 			push @$terminated_instances, $terminated_instance;
 		}
-	
+
 		return $terminated_instances;
 	}
 }
@@ -4162,6 +5515,15 @@ Disables monitoring for a running instance. For more information, refer to the A
 
 The instance id(s) to monitor. Can be a scalar or an array ref
 
+=item CallBack (optional)
+
+The coderef which will be called when the HTTP request to EC2 has completed.
+This coderef should accept one parameter, the regular return value of this
+function in synchronous mode.
+
+If this callback is supplied instead of returning an array ref N:A:E:R objects
+it will return an AnyEvent condvar which can be waited upon for completion.
+
 =back
 
 Returns an array ref of Net::Amazon::EC2::MonitoredInstance objects
@@ -4172,6 +5534,7 @@ sub unmonitor_instances {
 	my $self = shift;
 	my %args = validate( @_, {
 		InstanceId	=> { type => ARRAYREF | SCALAR, optional => 1 },
+		CallBack	=> { type => CODEREF, optional => 1 },
 	});
 
 	# If we have a array ref of instances lets split them out into their InstanceId.n format
@@ -4183,25 +5546,39 @@ sub unmonitor_instances {
 			$count++;
 		}
 	}
-	
+
+	my $CallBack = $args{CallBack};
+	if ($CallBack) {
+		return $self->_sign_async(Action => 'UnmonitorInstances', %args,
+				CallBack => sub {
+			my $xml = shift;
+			$CallBack->($self->_unmonitor_instances($xml));
+		});
+	}
+
 	my $xml = $self->_sign(Action  => 'UnmonitorInstances', %args);
-	
+	return $self->_unmonitor_instances($xml);
+}
+
+sub _unmonitor_instances {
+	my ($self, $xml) = @_;
+
 	if ( grep { defined && length } $xml->{Errors} ) {
 		return $self->_parse_errors($xml);
 	}
 	else {
- 		my $monitored_instances;
+		my $monitored_instances;
 
- 		foreach my $monitored_instance_item (@{$xml->{instancesSet}{item}}) {
- 			my $monitored_instance = Net::Amazon::EC2::ReservedInstance->new(
+		foreach my $monitored_instance_item (@{$xml->{instancesSet}{item}}) {
+			my $monitored_instance = Net::Amazon::EC2::ReservedInstance->new(
 				instance_id	=> $monitored_instance_item->{instanceId},
 				state		=> $monitored_instance_item->{monitoring}{state},
- 			);
- 			
- 			push @$monitored_instances, $monitored_instance;
- 		}
- 		
- 		return $monitored_instances;
+			);
+
+			push @$monitored_instances, $monitored_instance;
+		}
+
+		return $monitored_instances;
 	}
 }
 
