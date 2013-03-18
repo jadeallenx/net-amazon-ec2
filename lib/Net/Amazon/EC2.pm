@@ -3726,6 +3726,15 @@ Whether the instance is optimized for EBS I/O.
 
 Specifies the private IP address to use when launching an Amazon VPC instance.
 
+=item IamInstanceProfile.Name (optional)
+
+Specifies the IAM profile to associate with the launched instance(s).  This is the name of the role.
+
+=item IamInstanceProfile.Arn (optional)
+
+Specifies the IAM profile to associate with the launched instance(s).  This is the ARN of the profile.
+
+
 =back
 
 Returns a Net::Amazon::EC2::ReservationInfo object
@@ -3762,6 +3771,9 @@ sub run_instances {
 		ClientToken										=> { type => SCALAR, optional => 1 },
 		EbsOptimized									=> { type => SCALAR, optional => 1 },
 		PrivateIpAddress								=> { type => SCALAR, optional => 1 },
+		'IamInstanceProfile.Name'								=> { type => SCALAR, optional => 1 },
+		'IamInstanceProfile.Arn'								=> { type => SCALAR, optional => 1 },
+
 	});
 	
 	# If we have a array ref of instances lets split them out into their SecurityGroup.n format
