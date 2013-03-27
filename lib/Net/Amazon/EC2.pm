@@ -7,6 +7,7 @@ use vars qw($VERSION);
 use XML::Simple;
 use LWP::UserAgent;
 use LWP::Protocol::https;
+use Digest::HMAC_SHA1;
 use Digest::SHA qw(hmac_sha256);
 use URI;
 use MIME::Base64 qw(encode_base64 decode_base64);
@@ -184,41 +185,59 @@ sub _sign {
 	my $action						= delete $args{Action};
 	my %sign_hash					= %args;
 	my $timestamp					= $self->timestamp;
+	my $uri							= URI->new($self->base_url);
+	my $sign_this;
+	my $encoded;
 
 	$sign_hash{AWSAccessKeyId}		= $self->AWSAccessKeyId;
 	$sign_hash{Action}				= $action;
 	$sign_hash{Timestamp}			= $timestamp;
 	$sign_hash{Version}				= $self->version;
 	$sign_hash{SignatureVersion}	= $self->signature_version;
-    $sign_hash{SignatureMethod}     = "HmacSHA256";
 
-	my $sign_this = "POST\n";
-	my $uri = URI->new($self->base_url);
+	if ($self->signature_version == 1) {
+	    $sign_hash{SignatureMethod} = "HmacSHA1";
 
-    $sign_this .= lc($uri->host) . "\n";
-    $sign_this .= "/\n";
+		foreach my $key (sort { lc($a) cmp lc($b) } keys %sign_hash) {
+			$sign_this .= $key . $sign_hash{$key};
+		}
 
-    my @signing_elements;
+		$encoded = $self->_hashit_sha1($self->SecretAccessKey, $sign_this);
+	}
+	elsif ($self->signature_version == 2) {
+	    $sign_hash{SignatureMethod} = "HmacSHA256";
 
-	foreach my $key (sort keys %sign_hash) {
-		push @signing_elements, uri_escape_utf8($key)."=".uri_escape_utf8($sign_hash{$key});
+		$sign_this = "POST\n" . lc($uri->host) . "\n/\n";
+
+	    my @signing_elements;
+
+		foreach my $key (sort keys %sign_hash) {
+			push @signing_elements, uri_escape_utf8($key)."=".uri_escape_utf8($sign_hash{$key});
+		}
+
+	    $sign_this .= join "&", @signing_elements;
+
+		$encoded = $self->_hashit_sha256($self->SecretAccessKey, $sign_this);
 	}
 
-    $sign_this .= join "&", @signing_elements;
-
 	$self->_debug("QUERY TO SIGN: $sign_this");
-	my $encoded = $self->_hashit($self->SecretAccessKey, $sign_this);
 
 	my %params = (
 		Action				=> $action,
 		SignatureVersion	=> $self->signature_version,
-        SignatureMethod     => "HmacSHA256",
 		AWSAccessKeyId		=> $self->AWSAccessKeyId,
 		Timestamp			=> $timestamp,
 		Version				=> $self->version,
 		Signature			=> $encoded,
 		%args
 	);
+
+	if ($self->signature_version == 1) {
+		$params{'SignatureMethod'} = "HmacSHA1";
+	}
+	elsif($self->signature_version == 2) {
+		$params{'SignatureMethod'} = "HmacSHA256";
+	}
 	
 	my $ur	= $uri->as_string();
 	$self->_debug("GENERATED QUERY URL: $ur");
@@ -307,7 +326,17 @@ sub _debug {
 }
 
 # HMAC sign the query with the aws secret access key and base64 encodes the result.
-sub _hashit {
+sub _hashit_sha1 {
+   my $self                                = shift;
+   my ($secret_access_key, $query_string)  = @_;
+   my $hashed                              = Digest::HMAC_SHA1->new($secret_access_key);
+   $hashed->add($query_string);
+
+   my $encoded = encode_base64($hashed->digest, '');
+   return $encoded;
+}
+
+sub _hashit_sha256 {
 	my $self								= shift;
 	my ($secret_access_key, $query_string)	= @_;
 	
