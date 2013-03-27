@@ -733,6 +733,19 @@ instance before image creation and reboots the instance afterwards. When set to 
 does not shut down the instance before creating the image. When this option is used, file system 
 integrity on the created image cannot be guaranteed. 
 
+=item BlockDeviceMapping (optional)
+
+Array ref of the device names exposed to the instance.
+
+You can specify device names as '<device>=<block_device>' similar to ec2-create-image command. (L<http://docs.aws.amazon.com/AWSEC2/latest/CommandLineReference/ApiReference-cmd-CreateImage.html>)
+
+  BlockDeviceMapping => [
+      '/dev/sda=:256:true:standard',
+      '/dev/sdb=none',
+      '/dev/sdc=ephemeral0',
+      '/dev/sdd=ephemeral1',
+     ],
+
 =back
 
 Returns the ID of the AMI created.
@@ -742,12 +755,43 @@ Returns the ID of the AMI created.
 sub create_image {
 	my $self = shift;
 	my %args = validate( @_, {
-		InstanceId	=> { type => SCALAR },
-		Name		=> { type => SCALAR },
-		Description	=> { type => SCALAR, optional => 1 },
-		NoReboot	=> { type => SCALAR, optional => 1 },
+		InstanceId			=> { type => SCALAR },
+		Name				=> { type => SCALAR },
+		Description			=> { type => SCALAR, optional => 1 },
+		NoReboot			=> { type => SCALAR, optional => 1 },
+		BlockDeviceMapping	=> { type => ARRAYREF, optional => 1 },
 	});
 		
+
+	if (my $bdm = delete $args{BlockDeviceMapping}) {
+		my $n = 0;
+		for my $bdme (@$bdm) {
+			my($device, $block_device) = split /=/, $bdme, 2;
+			$args{"BlockDeviceMapping.${n}.DeviceName"} = $device;
+
+			if ($block_device =~ /^ephemeral[0-9]+$/) {
+				$args{"BlockDeviceMapping.${n}.VirtualName"} = $block_device;
+			} elsif ($block_device eq 'none') {
+				$args{"BlockDeviceMapping.${n}.NoDevice"} = '';
+			} else {
+				my @keys = qw(
+								 Ebs.SnapshotId
+								 Ebs.VolumeSize
+								 Ebs.DeleteOnTermination
+								 Ebs.VolumeType
+								 Ebs.Iops
+							);
+				for my $bde (split /:/, $block_device) {
+					my $key = shift @keys;
+					next unless $bde;
+					$args{"BlockDeviceMapping.${n}.${key}"} = $bde;
+				}
+			}
+
+			$n++;
+		}
+	}
+
 	my $xml = $self->_sign(Action  => 'CreateImage', %args);
 
 	if ( grep { defined && length } $xml->{Errors} ) {
