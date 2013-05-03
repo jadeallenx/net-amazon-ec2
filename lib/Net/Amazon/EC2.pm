@@ -2051,7 +2051,6 @@ sub describe_instance_attribute {
 				push @$block_mappings, $block_device_mapping;
 			}
 
-			warn Dumper($block_mappings);
 			$attribute_response = Net::Amazon::EC2::DescribeInstanceAttributeResponse->new(
 				instance_id				=> $xml->{instanceId},
 				block_device_mapping	=> $block_mappings,
