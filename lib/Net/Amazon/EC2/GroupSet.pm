@@ -1,6 +1,6 @@
 package Net::Amazon::EC2::GroupSet;
 use Moo;
-use MooX::Types::MooseLike::Base;
+use MooX::Types::MooseLike::Base qw(Str Maybe);
 
 =head1 NAME
 

@@ -1,6 +1,6 @@
 package Net::Amazon::EC2::Snapshot;
 use Moo;
-use MooX::Types::MooseLike::Base;
+use MooX::Types::MooseLike::Base qw(Str Maybe ArrayRef InstanceOf);
 
 =head1 NAME
 
@@ -63,7 +63,7 @@ has 'owner_id'		=> ( is => 'ro', isa => Str, required => 1 );
 has 'volume_size'	=> ( is => 'ro', isa => Str, required => 1 );
 has 'description'	=> ( is => 'ro', isa => Maybe[Str], required => 0 );
 has 'owner_alias'	=> ( is => 'ro', isa => Maybe[Str], required => 0 );
-has 'tag_set'		=> ( is => 'ro', isa => Maybe[ArrayRef[Net::Amazon::EC2::TagSet]], required => 0 );
+has 'tag_set'		=> ( is => 'ro', isa => Maybe[ArrayRef[InstanceOf['Net::Amazon::EC2::TagSet']]], required => 0 );
 
 =head1 AUTHOR
 

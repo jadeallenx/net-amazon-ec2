@@ -1,6 +1,6 @@
 package Net::Amazon::EC2::DescribeImagesResponse;
 use Moo;
-use MooX::Types::MooseLike::Base;
+use MooX::Types::MooseLike::Base qw(Str Maybe ArrayRef InstanceOf);
 
 =head1 NAME
 
@@ -118,14 +118,14 @@ has 'image_type'			=> ( is => 'ro', isa => Maybe[Str], required => 0 );
 has 'kernel_id'				=> ( is => 'ro', isa => Maybe[Str], required => 0 );
 has 'ramdisk_id'			=> ( is => 'ro', isa => Maybe[Str], required => 0 );
 has 'platform'				=> ( is => 'ro', isa => Maybe[Str], required => 0 );
-has 'state_reason'			=> ( is => 'ro', isa => Maybe[Net::Amazon::EC2::StateReason], required => 0 );
+has 'state_reason'			=> ( is => 'ro', isa => Maybe[InstanceOf['Net::Amazon::EC2::StateReason']], required => 0 );
 has 'image_owner_alias'		=> ( is => 'ro', isa => Maybe[Str], required => 0 );
 has 'name'					=> ( is => 'ro', isa => Maybe[Str], required => 0 );
 has 'description'			=> ( is => 'ro', isa => Maybe[Str], required => 0 );
 has 'root_device_type'		=> ( is => 'ro', isa => Maybe[Str], required => 0 );
 has 'root_device_name'		=> ( is => 'ro', isa => Maybe[Str], required => 0 );
-has 'block_device_mapping'	=> ( is => 'ro', isa => Maybe[ArrayRef[Net::Amazon::EC2::BlockDeviceMapping]], required => 0 );
-has 'tag_set'		        => ( is => 'ro', isa => Maybe[ArrayRef[Net::Amazon::EC2::TagSet]], required => 0 );
+has 'block_device_mapping'	=> ( is => 'ro', isa => Maybe[ArrayRef[InstanceOf['Net::Amazon::EC2::BlockDeviceMapping']]], required => 0 );
+has 'tag_set'		        => ( is => 'ro', isa => Maybe[ArrayRef[InstanceOf['Net::Amazon::EC2::TagSet']]], required => 0 );
 
 =head1 AUTHOR
 

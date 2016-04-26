@@ -1,6 +1,6 @@
 package Net::Amazon::EC2::Volume;
 use Moo;
-use MooX::Types::MooseLike::Base;
+use MooX::Types::MooseLike::Base qw(Str Maybe Int ArrayRef InstanceOf);
 
 =head1 NAME
 
@@ -66,10 +66,10 @@ has 'zone'			=> ( is => 'ro', isa => Str, required => 1 );
 has 'status'		=> ( is => 'ro', isa => Str, required => 1 );
 has 'create_time'	=> ( is => 'ro', isa => Str, required => 1 );
 has 'volume_type'   => ( is => 'ro', isa => Str, default => sub {'standard'} );
-has 'iops'          => ( is => 'ro'  isa => Maybe[Int]);
-has 'encrypted'     => ( is => 'ro', isa => Maybe[Str], isa => 'Maybe[Str]', required => 0 );
-has 'attachments'	=> ( is => 'ro', isa => Maybe[ArrayRef[Net::Amazon::EC2::Attachment]], required => 0 );
-has 'tag_set'       => ( is => 'ro', isa => Maybe[ArrayRef[Net::Amazon::EC2::TagSet]], required => 0 );
+has 'iops'          => ( is => 'ro',  isa => Maybe[Int] );
+has 'encrypted'     => ( is => 'ro', isa => Maybe[Str], required => 0 );
+has 'attachments'	=> ( is => 'ro', isa => Maybe[ArrayRef[InstanceOf['Net::Amazon::EC2::Attachment']]], required => 0 );
+has 'tag_set'       => ( is => 'ro', isa => Maybe[ArrayRef[InstanceOf['Net::Amazon::EC2::TagSet']]], required => 0 );
 
 =head1 AUTHOR
 

@@ -1,6 +1,6 @@
 package Net::Amazon::EC2::Error;
 use Moo;
-use MooX::Types::MooseLike::Base;
+use MooX::Types::MooseLike::Base qw(Str);
 
 =head1 NAME
 
