@@ -1,5 +1,5 @@
 package Net::Amazon::EC2::DescribeTags;
-use Moose;
+use Moo;
 
 =head1 NAME
 
@@ -37,12 +37,10 @@ The value of the tag.
 
 =cut
 
-has 'resource_id'		=> ( is => 'ro', isa => 'Maybe[Str]', required => 1 );
-has 'resource_type'		=> ( is => 'ro', isa => 'Maybe[Str]', required => 1 );
-has 'key'				=> ( is => 'ro', isa => 'Maybe[Str]', required => 1 );
-has 'value'				=> ( is => 'ro', isa => 'Maybe[Str]', required => 1 );
-
-__PACKAGE__->meta->make_immutable();
+has 'resource_id'		=> ( is => 'ro', required => 1 );
+has 'resource_type'		=> ( is => 'ro', required => 1 );
+has 'key'				=> ( is => 'ro', required => 1 );
+has 'value'				=> ( is => 'ro', required => 1 );
 
 =head1 AUTHOR
 
@@ -55,6 +53,5 @@ under the same terms as Perl itself.
 
 =cut
 
-no Moose;
 1;
 

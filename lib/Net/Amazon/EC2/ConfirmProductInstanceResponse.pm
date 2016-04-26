@@ -1,6 +1,5 @@
 package Net::Amazon::EC2::ConfirmProductInstanceResponse;
-use strict;
-use Moose;
+use Moo;
 
 =head1 NAME
 
@@ -28,10 +27,8 @@ is sucessfully attached to the instance.
 
 =cut
 
-has 'return'	=> ( is => 'ro', isa => 'Str', required => 1 );
-has 'owner_id'	=> ( is => 'ro', isa => 'Str', required => 0 );
-
-__PACKAGE__->meta->make_immutable();
+has 'return'	=> ( is => 'ro', required => 1 );
+has 'owner_id'	=> ( is => 'ro', required => 0 );
 
 =head1 AUTHOR
 
@@ -44,5 +41,4 @@ under the same terms as Perl itself.
 
 =cut
 
-no Moose;
 1;

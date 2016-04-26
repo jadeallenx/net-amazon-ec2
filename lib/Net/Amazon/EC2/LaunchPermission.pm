@@ -1,5 +1,5 @@
 package Net::Amazon::EC2::LaunchPermission;
-use Moose;
+use Moo;
 
 =head1 NAME
 
@@ -26,10 +26,8 @@ The AWS account id of the user with launch permissions.
 
 =cut
 
-has 'group'         => ( is => 'ro', isa => 'Str' );
-has 'user_id'       => ( is => 'ro', isa => 'Str' );
-
-__PACKAGE__->meta->make_immutable();
+has 'group'         => ( is => 'ro' );
+has 'user_id'       => ( is => 'ro' );
 
 =head1 AUTHOR
 
@@ -42,5 +40,4 @@ under the same terms as Perl itself.
 
 =cut
 
-no Moose;
 1;

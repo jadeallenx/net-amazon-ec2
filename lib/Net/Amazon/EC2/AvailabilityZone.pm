@@ -1,5 +1,5 @@
 package Net::Amazon::EC2::AvailabilityZone;
-use Moose;
+use Moo;
 
 =head1 NAME
 
@@ -33,12 +33,10 @@ An array ref of Net::Amazon::EC2::AvailabilityZoneMessage objects representing m
 
 =cut
 
-has 'zone_name'		=> ( is => 'ro', isa => 'Str', required => 1 );
-has 'zone_state'	=> ( is => 'ro', isa => 'Str', required => 1 );
-has 'region_name'	=> ( is => 'ro', isa => 'Maybe[Str]', required => 1 );
-has 'messages'		=> ( is => 'ro', isa => 'ArrayRef[Net::Amazon::EC2::AvailabilityZoneMessage]|Undef', required => 0 );
-
-__PACKAGE__->meta->make_immutable();
+has 'zone_name'		=> ( is => 'ro', required => 1 );
+has 'zone_state'	=> ( is => 'ro', required => 1 );
+has 'region_name'	=> ( is => 'ro', required => 1 );
+has 'messages'		=> ( is => 'ro', required => 0 );
 
 =head1 AUTHOR
 
@@ -51,5 +49,4 @@ under the same terms as Perl itself.
 
 =cut
 
-no Moose;
 1;

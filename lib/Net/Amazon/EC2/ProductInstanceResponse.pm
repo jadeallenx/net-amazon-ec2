@@ -1,6 +1,5 @@
 package Net::Amazon::EC2::ProductInstanceResponse;
-use strict;
-use Moose;
+use Moo;
 
 =head1 NAME
 
@@ -28,11 +27,9 @@ AWS Account id of the instance owner.
 
 =cut
 
-has 'product_code'	=> ( is => 'ro', isa => 'Str', required => 1 );
-has 'instance_id'	=> ( is => 'ro', isa => 'Str', required => 1 );
-has 'owner_id'		=> ( is => 'ro', isa => 'Str', required => 1 );
-
-__PACKAGE__->meta->make_immutable();
+has 'product_code'	=> ( is => 'ro', required => 1 );
+has 'instance_id'	=> ( is => 'ro', required => 1 );
+has 'owner_id'		=> ( is => 'ro', required => 1 );
 
 =back
 
@@ -47,5 +44,4 @@ under the same terms as Perl itself.
 
 =cut
 
-no Moose;
 1;

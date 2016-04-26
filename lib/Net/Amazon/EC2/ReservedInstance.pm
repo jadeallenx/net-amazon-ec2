@@ -1,5 +1,5 @@
 package Net::Amazon::EC2::ReservedInstance;
-use Moose;
+use Moo;
 
 =head1 NAME
 
@@ -57,18 +57,16 @@ The state of the Reserved Instance purchase.
 
 =cut
 
-has 'reserved_instances_id'	=> ( is => 'ro', isa => 'Str', required => 1 );
-has 'instance_type'			=> ( is => 'ro', isa => 'Str', required => 1 );
-has 'availability_zone'		=> ( is => 'ro', isa => 'Str', required => 1 );
-has 'duration'				=> ( is => 'ro', isa => 'Str', required => 1 );
-has 'start'					=> ( is => 'ro', isa => 'Str', required => 1 );
-has 'usage_price'			=> ( is => 'ro', isa => 'Str', required => 1 );
-has 'fixed_price'			=> ( is => 'ro', isa => 'Str', required => 1 );
-has 'instance_count'		=> ( is => 'ro', isa => 'Str', required => 1 );
-has 'product_description'	=> ( is => 'ro', isa => 'Str', required => 1 );
-has 'state'					=> ( is => 'ro', isa => 'Str', required => 1 );
-
-__PACKAGE__->meta->make_immutable();
+has 'reserved_instances_id'	=> ( is => 'ro', required => 1 );
+has 'instance_type'			=> ( is => 'ro', required => 1 );
+has 'availability_zone'		=> ( is => 'ro', required => 1 );
+has 'duration'				=> ( is => 'ro', required => 1 );
+has 'start'					=> ( is => 'ro', required => 1 );
+has 'usage_price'			=> ( is => 'ro', required => 1 );
+has 'fixed_price'			=> ( is => 'ro', required => 1 );
+has 'instance_count'		=> ( is => 'ro', required => 1 );
+has 'product_description'	=> ( is => 'ro', required => 1 );
+has 'state'					=> ( is => 'ro', required => 1 );
 
 =head1 AUTHOR
 
@@ -81,5 +79,4 @@ under the same terms as Perl itself.
 
 =cut
 
-no Moose;
 1;

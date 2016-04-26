@@ -1,5 +1,5 @@
 package Net::Amazon::EC2::SnapshotAttribute;
-use Moose;
+use Moo;
 
 =head1 NAME
 
@@ -25,10 +25,8 @@ An arrayref of Net::Amazon::EC2::CreateVolumePermission objects
 
 =cut
 
-has 'snapshot_id'	=> ( is => 'ro', isa => 'Str', required => 1 );
-has 'permissions'	=> ( is => 'ro', isa => 'Maybe[ArrayRef[Net::Amazon::EC2::CreateVolumePermission]]', required => 0 );
-
-__PACKAGE__->meta->make_immutable();
+has 'snapshot_id'	=> ( is => 'ro', required => 1 );
+has 'permissions'	=> ( is => 'ro', required => 0 );
 
 =head1 AUTHOR
 
@@ -41,5 +39,4 @@ under the same terms as Perl itself.
 
 =cut
 
-no Moose;
 1;

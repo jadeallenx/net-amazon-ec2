@@ -1,6 +1,5 @@
 package Net::Amazon::EC2::PlacementResponse;
-use strict;
-use Moose;
+use Moo;
 
 =head1 NAME
 
@@ -22,9 +21,7 @@ The availability zone for the instance.
 
 =cut
 
-has 'availability_zone'	=> ( is => 'ro', isa => 'Maybe[Str]', required => 1 );
-
-__PACKAGE__->meta->make_immutable();
+has 'availability_zone'	=> ( is => 'ro', required => 1 );
 
 =head1 AUTHOR
 
@@ -37,5 +34,4 @@ under the same terms as Perl itself.
 
 =cut
 
-no Moose;
 1;

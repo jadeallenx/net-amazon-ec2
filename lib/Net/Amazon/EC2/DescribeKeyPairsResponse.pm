@@ -1,6 +1,6 @@
 package Net::Amazon::EC2::DescribeKeyPairsResponse;
 use strict;
-use Moose;
+use Moo;
 
 =head1 NAME
 
@@ -24,10 +24,8 @@ A fingerprint for the private key of the key pair. This is calculated as the SHA
 
 =cut
 
-has 'key_name'          => ( is => 'ro', isa => 'Str', required => 1 );
-has 'key_fingerprint'   => ( is => 'ro', isa => 'Str', required => 1 );
-
-__PACKAGE__->meta->make_immutable();
+has 'key_name'          => ( is => 'ro', required => 1 );
+has 'key_fingerprint'   => ( is => 'ro', required => 1 );
 
 =back
 
@@ -42,5 +40,4 @@ under the same terms as Perl itself.
 
 =cut
 
-no Moose;
 1;

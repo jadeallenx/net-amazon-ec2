@@ -1,5 +1,5 @@
 package Net::Amazon::EC2::CreateVolumePermission;
-use Moose;
+use Moo;
 
 =head1 NAME
 
@@ -23,10 +23,8 @@ Group that is allowed to create volumes from the snapshot (currently supports "a
 
 =cut
 
-has 'user_id'       => ( is => 'ro', isa => 'Maybe[Str]', required => 0 );
-has 'group'			=> ( is => 'ro', isa => 'Maybe[Str]', required => 0 );
-
-__PACKAGE__->meta->make_immutable();
+has 'user_id'       => ( is => 'ro', required => 0 );
+has 'group'			=> ( is => 'ro', required => 0 );
 
 =back
 
@@ -41,5 +39,4 @@ under the same terms as Perl itself.
 
 =cut
 
-no Moose;
 1;

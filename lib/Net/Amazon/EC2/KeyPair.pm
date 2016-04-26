@@ -1,5 +1,5 @@
 package Net::Amazon::EC2::KeyPair;
-use Moose;
+use Moo;
 
 =head1 NAME
 
@@ -23,9 +23,7 @@ The unencrypted PEM encoded RSA private key.
 
 extends 'Net::Amazon::EC2::DescribeKeyPairsResponse';
 
-has 'key_material'   => ( is => 'ro', isa => 'Str', required => 1 );
-
-__PACKAGE__->meta->make_immutable();
+has 'key_material'   => ( is => 'ro', required => 1 );
 
 =head1 AUTHOR
 
@@ -38,5 +36,4 @@ under the same terms as Perl itself.
 
 =cut
 
-no Moose;
 1;

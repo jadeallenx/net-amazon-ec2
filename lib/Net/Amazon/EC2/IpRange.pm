@@ -1,5 +1,5 @@
 package Net::Amazon::EC2::IpRange;
-use Moose;
+use Moo;
 
 =head1 NAME
 
@@ -21,9 +21,7 @@ CIDR IP Range.
 
 =cut
 
-has 'cidr_ip'  => ( is => 'ro', isa => 'Str' );
-
-__PACKAGE__->meta->make_immutable();
+has 'cidr_ip'  => ( is => 'ro' );
 
 =head1 AUTHOR
 
@@ -36,5 +34,4 @@ under the same terms as Perl itself.
 
 =cut
 
-no Moose;
 1;

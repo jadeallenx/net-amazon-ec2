@@ -1,5 +1,6 @@
 package Net::Amazon::EC2::SecurityGroup;
-use Moose;
+use Moo;
+use MooX::Types::MooseLike::Base qw(Str Maybe InstanceOf ArrayRef);
 
 =head1 NAME
 
@@ -47,26 +48,23 @@ The set of associated tags for the security group
 
 =cut
 
-has 'owner_id'          => ( is => 'ro', isa => 'Str', required => 1 );
-has 'group_name'        => ( is => 'ro', isa => 'Str', required => 1 );
-has 'group_id'          => ( is => 'ro', isa => 'Str', required => 1 );
-has 'group_description' => ( is => 'ro', isa => 'Str', required => 1 );
+has 'owner_id'          => ( is => 'ro', isa => Str, required => 1 );
+has 'group_name'        => ( is => 'ro', isa => Str, required => 1 );
+has 'group_id'          => ( is => 'ro', isa => Str, required => 1 );
+has 'group_description' => ( is => 'ro', isa => Str, required => 1 );
 has 'ip_permissions'    => ( 
     is          => 'ro', 
-    isa         => 'Maybe[ArrayRef[Net::Amazon::EC2::IpPermission]]',
-    predicate   => 'has_ip_permissions',
+    predicate   => 1,
     default		=> sub { [ ] },
 );
 has 'ip_permissions_egress' => ( 
     is          => 'ro', 
-    isa         => 'Maybe[ArrayRef[Net::Amazon::EC2::IpPermission]]',
+    isa         => Maybe[ArrayRef[InstanceOf['Net::Amazon::EC2::IpPermission']]],
     predicate   => 'has_ip_permissions_egress',
     default		=> sub { [ ] },
 );
-has 'vpc_id'           => ( is => 'ro', isa => 'Maybe[Str]', required => 0 );
-has 'tag_set'          => ( is => 'ro', isa => 'Maybe[ArrayRef[Net::Amazon::EC2::TagSet]]', required => 0 );
-
-__PACKAGE__->meta->make_immutable();
+has 'vpc_id'  => ( is => 'ro', isa => Maybe[Str], required => 0 );
+has 'tag_set' => ( is => 'ro', isa => Maybe[ArrayRef[InstanceOf['Net::Amazon::EC2::TagSet']]], required => 0 );
 
 =back
 
@@ -81,5 +79,4 @@ under the same terms as Perl itself.
 
 =cut
 
-no Moose;
 1;
