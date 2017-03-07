@@ -1,6 +1,6 @@
 package Net::Amazon::EC2::EbsBlockDevice;
 use strict;
-use Moose;
+use Moo;
 
 =head1 NAME
 
@@ -30,11 +30,9 @@ Specifies whether the Amazon EBS volume is deleted on instance termination.
 
 =cut
 
-has 'snapshot_id'			=> ( is => 'ro', isa => 'Maybe[Str]', required => 0 );
-has 'volume_size'			=> ( is => 'ro', isa => 'Maybe[Int]', required => 0 );
-has 'delete_on_termination'	=> ( is => 'ro', isa => 'Maybe[Str]', required => 0 );
-
-__PACKAGE__->meta->make_immutable();
+has 'snapshot_id'			=> ( is => 'ro', required => 0 );
+has 'volume_size'			=> ( is => 'ro', required => 0 );
+has 'delete_on_termination'	=> ( is => 'ro', required => 0 );
 
 =head1 AUTHOR
 
@@ -47,5 +45,4 @@ under the same terms as Perl itself.
 
 =cut
 
-no Moose;
 1;

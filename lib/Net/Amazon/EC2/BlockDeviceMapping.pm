@@ -1,6 +1,5 @@
 package Net::Amazon::EC2::BlockDeviceMapping;
-use strict;
-use Moose;
+use Moo;
 
 =head1 NAME
 
@@ -34,12 +33,10 @@ Specifies the device name to suppress during instance launch.
 
 =cut
 
-has 'device_name'	=> ( is => 'ro', isa => 'Str', required => 1 );
-has 'ebs'			=> ( is => 'ro', isa => 'Maybe[Net::Amazon::EC2::EbsBlockDevice]|Maybe[Net::Amazon::EC2::EbsInstanceBlockDeviceMapping]', required => 0 );
-has 'virtual_name'	=> ( is => 'ro', isa => 'Maybe[Str]', required => 0 );
-has 'no_device'		=> ( is => 'ro', isa => 'Maybe[Int]', required => 0 );
-
-__PACKAGE__->meta->make_immutable();
+has 'device_name'	=> ( is => 'ro', required => 1 );
+has 'ebs'			=> ( is => 'ro', required => 0 );
+has 'virtual_name'	=> ( is => 'ro', required => 0 );
+has 'no_device'		=> ( is => 'ro', required => 0 );
 
 =head1 AUTHOR
 
@@ -52,5 +49,4 @@ under the same terms as Perl itself.
 
 =cut
 
-no Moose;
 1;

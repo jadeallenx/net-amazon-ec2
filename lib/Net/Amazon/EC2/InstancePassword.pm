@@ -1,5 +1,5 @@
 package Net::Amazon::EC2::InstancePassword;
-use Moose;
+use Moo;
 
 =head1 NAME
 
@@ -29,11 +29,9 @@ The password of the instance.
 
 =cut
 
-has 'instance_id'   => ( is => 'ro', isa => 'Str', required => 1 );
-has 'timestamp'		=> ( is => 'ro', isa => 'Str', required => 1 );
-has 'password_data'	=> ( is => 'ro', isa => 'Str', required => 1 );
-
-__PACKAGE__->meta->make_immutable();
+has 'instance_id'   => ( is => 'ro', required => 1 );
+has 'timestamp'		=> ( is => 'ro', required => 1 );
+has 'password_data'	=> ( is => 'ro', required => 1 );
 
 =head1 AUTHOR
 
@@ -46,5 +44,4 @@ under the same terms as Perl itself.
 
 =cut
 
-no Moose;
 1;

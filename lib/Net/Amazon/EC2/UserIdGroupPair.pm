@@ -1,5 +1,5 @@
 package Net::Amazon::EC2::UserIdGroupPair;
-use Moose;
+use Moo;
 
 =head1 NAME
 
@@ -23,10 +23,8 @@ Name of the security group.
 
 =cut
 
-has 'user_id'       => ( is => 'ro', isa => 'Str', required => 1 );
-has 'group_name'    => ( is => 'ro', isa => 'Maybe[Str]', required => 1 );
-
-__PACKAGE__->meta->make_immutable();
+has 'user_id'       => ( is => 'ro', required => 1 );
+has 'group_name'    => ( is => 'ro', required => 1 );
 
 =back
 
@@ -41,5 +39,4 @@ under the same terms as Perl itself.
 
 =cut
 
-no Moose;
 1;

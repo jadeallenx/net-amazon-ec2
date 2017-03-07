@@ -1,5 +1,5 @@
 package Net::Amazon::EC2::IpPermission;
-use Moose;
+use Moo;
 
 =head1 NAME
 
@@ -46,24 +46,20 @@ or both can be specified as -1, which is a wildcard.
 
 =cut
 
-has 'ip_protocol'   => ( is => 'ro', isa => 'Str', required => 1 );
-has 'from_port'     => ( is => 'ro', isa => 'Maybe[Int]', required => 1 );
-has 'to_port'       => ( is => 'ro', isa => 'Maybe[Int]', required => 1 );
+has 'ip_protocol'   => ( is => 'ro', required => 1 );
+has 'from_port'     => ( is => 'ro', required => 1 );
+has 'to_port'       => ( is => 'ro', required => 1 );
 has 'ip_ranges'     => ( 
     is          => 'rw', 
-    isa         => 'ArrayRef[Net::Amazon::EC2::IpRange]',
-    predicate   => 'has_ip_ranges',
+    predicate   => 1,
     required    => 0,
 );
 has 'groups'        => ( 
     is          => 'rw', 
-    isa         => 'ArrayRef[Net::Amazon::EC2::UserIdGroupPair]',
-    predicate   => 'has_groups',
+    predicate   => 1,
     required    => 0,
 );
-has 'icmp_port'		=> ( is => 'ro', isa => 'Maybe[Str]', required => 0 );
-
-__PACKAGE__->meta->make_immutable();
+has 'icmp_port'		=> ( is => 'ro', required => 0 );
 
 =head1 AUTHOR
 
@@ -76,5 +72,4 @@ under the same terms as Perl itself.
 
 =cut
 
-no Moose;
 1;

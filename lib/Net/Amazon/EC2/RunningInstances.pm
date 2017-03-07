@@ -1,5 +1,6 @@
 package Net::Amazon::EC2::RunningInstances;
-use Moose;
+use Moo;
+use MooX::Types::MooseLike::Base qw(Str Maybe InstanceOf ArrayRef);
 
 =head1 NAME
 
@@ -132,42 +133,40 @@ The instance name from tags.
 
 =cut
 
-has 'ami_launch_index'  	=> ( is => 'ro', isa => 'Str', required => 0 );
-has 'dns_name'          	=> ( is => 'ro', isa => 'Maybe[Str]', required => 0 );
-has 'image_id'          	=> ( is => 'ro', isa => 'Str', required => 1 );
-has 'kernel_id'         	=> ( is => 'ro', isa => 'Maybe[Str]', required => 1 );
-has 'ramdisk_id'        	=> ( is => 'ro', isa => 'Maybe[Str]', required => 1 );
-has 'instance_id'       	=> ( is => 'ro', isa => 'Str', required => 1 );
+has 'ami_launch_index'  	=> ( is => 'ro', required => 0 );
+has 'dns_name'          	=> ( is => 'ro', required => 0 );
+has 'image_id'          	=> ( is => 'ro', required => 1 );
+has 'kernel_id'         	=> ( is => 'ro', required => 1 );
+has 'ramdisk_id'        	=> ( is => 'ro', required => 1 );
+has 'instance_id'       	=> ( is => 'ro', required => 1 );
 has 'instance_state'    	=> ( 
     is => 'ro', 
-    isa => 'Net::Amazon::EC2::InstanceState', 
     required => 1
 );
-has 'instance_type'     	=> ( is => 'ro', isa => 'Str', required => 1 );
-has 'key_name'          	=> ( is => 'ro', isa => 'Maybe[Str]', required => 0 );
-has 'launch_time'       	=> ( is => 'ro', isa => 'Str', required => 1 );
-has 'placement'				=> ( is => 'ro', isa => 'Net::Amazon::EC2::PlacementResponse', required => 1 );
-has 'private_dns_name'  	=> ( is => 'ro', isa => 'Maybe[Str]', required => 0 );
+has 'instance_type'     	=> ( is => 'ro', required => 1 );
+has 'key_name'          	=> ( is => 'ro', required => 0 );
+has 'launch_time'       	=> ( is => 'ro', required => 1 );
+has 'placement'				=> ( is => 'ro', required => 1 );
+has 'private_dns_name'  	=> ( is => 'ro', required => 0 );
 has 'product_codes'     	=> ( 
     is          => 'rw', 
-    isa         => 'ArrayRef[Net::Amazon::EC2::ProductCode]',
-    auto_deref  => 1,
     required	=> 0,
 );
-has 'reason'            	=> ( is => 'ro', isa => 'Maybe[Str]', required => 0 );
-has 'platform'				=> ( is => 'ro', isa => 'Maybe[Str]', required => 0 );
-has 'monitoring'			=> ( is => 'ro', isa => 'Maybe[Str]', required => 0 );
-has 'subnet_id'				=> ( is => 'ro', isa => 'Maybe[Str]', required => 0 );
-has 'vpc_id'				=> ( is => 'ro', isa => 'Maybe[Str]', required => 0 );
-has 'private_ip_address'	=> ( is => 'ro', isa => 'Maybe[Str]', required => 0 );
-has 'ip_address'			=> ( is => 'ro', isa => 'Maybe[Str]', required => 0 );
-has 'state_reason'			=> ( is => 'ro', isa => 'Maybe[Net::Amazon::EC2::StateReason]', required => 0 );
-has 'architecture'			=> ( is => 'ro', isa => 'Maybe[Str]', required => 0 );
-has 'root_device_name'		=> ( is => 'ro', isa => 'Maybe[Str]', required => 0 );
-has 'root_device_type'		=> ( is => 'ro', isa => 'Maybe[Str]', required => 0 );
-has 'block_device_mapping'	=> ( is => 'ro', isa => 'Maybe[ArrayRef[Net::Amazon::EC2::BlockDeviceMapping]]', required => 0 );
-has 'network_interface_set' => ( is => 'ro', isa => 'Maybe[ArrayRef[Net::Amazon::EC2::NetworkInterfaceSet]]', required => 0 );
-has 'tag_set'				=> ( is => 'ro', isa => 'Maybe[ArrayRef[Net::Amazon::EC2::TagSet]]', required => 0 );
+has 'reason'            	=> ( is => 'ro', isa => Maybe[Str], required => 0 );
+has 'platform'				=> ( is => 'ro', isa => Maybe[Str], required => 0 );
+has 'monitoring'			=> ( is => 'ro', isa => Maybe[Str], required => 0 );
+has 'subnet_id'				=> ( is => 'ro', isa => Maybe[Str], required => 0 );
+has 'vpc_id'				=> ( is => 'ro', isa => Maybe[Str], required => 0 );
+has 'private_ip_address'	=> ( is => 'ro', isa => Maybe[Str], required => 0 );
+has 'ip_address'			=> ( is => 'ro', isa => Maybe[Str], required => 0 );
+has 'state_reason'			=> ( is => 'ro', isa => Maybe[InstanceOf['Net::Amazon::EC2::StateReason']], required => 0 );
+has 'architecture'			=> ( is => 'ro', isa => Maybe[Str], required => 0 );
+has 'root_device_name'		=> ( is => 'ro', isa => Maybe[Str], required => 0 );
+has 'root_device_type'		=> ( is => 'ro', isa => Maybe[Str], required => 0 );
+has 'block_device_mapping'	=> ( is => 'ro', isa => Maybe[ArrayRef[InstanceOf['Net::Amazon::EC2::BlockDeviceMapping']]], required => 0 );
+has 'network_interface_set' => ( is => 'ro', isa => Maybe[ArrayRef[InstanceOf['Net::Amazon::EC2::NetworkInterfaceSet']]], required => 0 );
+has 'tag_set'				=> ( is => 'ro', isa => Maybe[ArrayRef[InstanceOf['Net::Amazon::EC2::TagSet']]], required => 0 );
+
 has 'name' => (
 	is => 'ro',
 	lazy    => 1,
@@ -178,9 +177,6 @@ has 'name' => (
 		return $name->{value} || '';
 	},
 );
-
-
-__PACKAGE__->meta->make_immutable();
 
 =back
 
@@ -195,5 +191,4 @@ under the same terms as Perl itself.
 
 =cut
 
-no Moose;
 1;

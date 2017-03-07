@@ -1,5 +1,5 @@
 package Net::Amazon::EC2::DescribeAddress;
-use Moose;
+use Moo;
 
 =head1 NAME
 
@@ -25,10 +25,8 @@ The instance id (if any) associated with the public ip.
 
 =cut
 
-has 'public_ip'		=> ( is => 'ro', isa => 'Maybe[Str]', required => 1 );
-has 'instance_id'	=> ( is => 'ro', isa => 'Maybe[Str]', required => 0 );
-
-__PACKAGE__->meta->make_immutable();
+has 'public_ip'		=> ( is => 'ro', required => 1 );
+has 'instance_id'	=> ( is => 'ro', required => 0 );
 
 =head1 AUTHOR
 
@@ -41,5 +39,4 @@ under the same terms as Perl itself.
 
 =cut
 
-no Moose;
 1;
