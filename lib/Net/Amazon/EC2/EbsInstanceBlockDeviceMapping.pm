@@ -1,4 +1,5 @@
 package Net::Amazon::EC2::EbsInstanceBlockDeviceMapping;
+
 use strict;
 use Moose;
 

@@ -1,4 +1,5 @@
 package Net::Amazon::EC2::InstancePassword;
+
 use Moose;
 
 =head1 NAME

@@ -1,4 +1,5 @@
 package Net::Amazon::EC2::UserData;
+
 use strict;
 use Moose;
 

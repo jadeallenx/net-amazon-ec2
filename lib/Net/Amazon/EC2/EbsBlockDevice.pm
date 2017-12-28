@@ -1,4 +1,5 @@
 package Net::Amazon::EC2::EbsBlockDevice;
+
 use strict;
 use Moose;
 

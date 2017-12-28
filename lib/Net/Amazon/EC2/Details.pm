@@ -1,4 +1,5 @@
 package Net::Amazon::EC2::Details;
+
 use Moose;
 
 =head1 NAME

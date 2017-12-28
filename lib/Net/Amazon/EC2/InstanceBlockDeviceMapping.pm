@@ -1,4 +1,5 @@
 package Net::Amazon::EC2::InstanceBlockDeviceMapping;
+
 use strict;
 use Moose;
 
