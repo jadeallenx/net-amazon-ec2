@@ -198,9 +198,8 @@ has 'SecretAccessKey' => (
 );
 has 'SecurityToken' => ( 
 	is => 'ro',
-	isa => 'Str',
+	isa => 'Maybe[Str]',
 	required => 0,
-	lazy => 1,
 	predicate => 'has_SecurityToken',
 	default => sub {
 		if (defined($_[0]->temp_creds)) {
@@ -227,7 +226,6 @@ has 'base_url'          => (
 );
 has 'temp_creds' => (
 	is      => 'ro',
-	lazy    => 1,
 	default => sub {
 		my $ret;
 		$ret = $_[0]->_fetch_iam_security_credentials();
@@ -345,13 +343,24 @@ sub _sign_v4 {
 	my @now              = gmtime();
 	my $amz_date         = strftime("%Y%m%dT%H%M%SZ", @now);
 	my $datestamp        = strftime("%Y%m%d", @now);
-	my $credential_scope = $datestamp . "/" . $self->region . "/" . $service . "/aws4_request"; 
+	my $credential_scope = $datestamp . "/" . $self->region . "/" . $service . "/aws4_request";
 	my $content_type     = "application/x-www-form-urlencoded";
 	my $signed_headers   = "content-type;host;x-amz-date";
-	# Assemble the content
+
+	# Step 1: create canonical request string
+	my $uri = URI->new($self->base_url);
+	my $canonical_headers = "content-type:" . $content_type . "\n" .
+				"host:" . lc($uri->host) . "\n" .
+				"x-amz-date:" . $amz_date . "\n";
 	$args{Version}       = $self->version;
-	if ($self->has_temp_creds || $self->has_SecurityToken) {
+	if ($self->SecurityToken) {
+		# If we have a security token from an IAM role, passed
+		# as instance metadata, it needs to be included in
+		# the list of canonical headers and passed with the
+		# request
 		$args{'X-Amz-Security-Token'} = $self->SecurityToken;
+		$canonical_headers .= "x-amz-security-token:". $self->SecurityToken . "\n";
+		$signed_headers .= ";x-amz-security-token";
 	}
 	my @content_elements;
 	foreach my $key (sort keys %args) {
@@ -361,11 +370,6 @@ sub _sign_v4 {
 
 	$self->_debug("CONTENT: $content");
 
-	# Step 1: create canonical request string
-	my $uri = URI->new($self->base_url);
-	my $canonical_headers = "content-type:" . $content_type . "\n" .
-				"host:" . lc($uri->host) . "\n" .
-				"x-amz-date:" . $amz_date . "\n";
 
 	my $canonical_request = "POST\n";			# method
 	$canonical_request .= "/\n";				# uri
@@ -398,12 +402,13 @@ sub _sign_v4 {
 				', Signature=' . $signature;
 
 
-	my $req = HTTP::Request->new('POST', $uri,
-			[ "Authorization" => $auth_header,
-			"Content-Type"  => $content_type,
-			"X-Amz-Date"    => $amz_date ] , 
-			$content
-	);
+	my $hdrs = [ "Authorization" => $auth_header,
+		     "Content-Type"  => $content_type,
+		     "X-Amz-Date" => $amz_date ];
+
+	push @{ $hdrs }, "X-Amz-Security-Token" => $self->SecurityToken if $self->SecurityToken;
+
+	my $req = HTTP::Request->new('POST', $uri, $hdrs, $content);
 	$self->_debug("HTTP REQUEST: " . $req->as_string() . "\n");
 
 	my $ua = LWP::UserAgent->new();
