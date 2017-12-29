@@ -1,4 +1,5 @@
 package Net::Amazon::EC2::MonitoredInstance;
+
 use Moose;
 
 =head1 NAME

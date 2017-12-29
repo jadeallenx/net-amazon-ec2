@@ -1,4 +1,5 @@
 package Net::Amazon::EC2::PlacementResponse;
+
 use strict;
 use Moose;
 

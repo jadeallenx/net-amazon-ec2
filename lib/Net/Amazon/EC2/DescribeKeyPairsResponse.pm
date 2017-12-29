@@ -1,4 +1,5 @@
 package Net::Amazon::EC2::DescribeKeyPairsResponse;
+
 use strict;
 use Moose;
 

@@ -1,4 +1,5 @@
 package Net::Amazon::EC2::AvailabilityZone;
+
 use Moose;
 
 =head1 NAME

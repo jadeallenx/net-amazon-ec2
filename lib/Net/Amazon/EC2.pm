@@ -1,8 +1,8 @@
 package Net::Amazon::EC2;
+
 use Moose;
 
 use strict;
-use vars qw($VERSION);
 
 use XML::Simple;
 use LWP::UserAgent;
@@ -70,16 +70,12 @@ use Net::Amazon::EC2::InstanceStatuses;
 use Net::Amazon::EC2::SystemStatus;
 use Net::Amazon::EC2::NetworkInterfaceSet;
 
-$VERSION = '0.34';
-
 =head1 NAME
 
 Net::Amazon::EC2 - Perl interface to the Amazon Elastic Compute Cloud (EC2)
 environment.
 
 =head1 VERSION
-
-This is Net::Amazon::EC2 version 0.32
 
 EC2 Query API version: '2014-06-15'
 

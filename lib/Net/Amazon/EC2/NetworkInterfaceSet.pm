@@ -1,4 +1,5 @@
 package Net::Amazon::EC2::NetworkInterfaceSet;
+
 use strict;
 use Moose;
 

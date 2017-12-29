@@ -1,4 +1,5 @@
 package Net::Amazon::EC2::LaunchPermissionOperation;
+
 use strict;
 use Moose;
 

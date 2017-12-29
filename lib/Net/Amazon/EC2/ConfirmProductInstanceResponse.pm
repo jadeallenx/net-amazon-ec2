@@ -1,4 +1,5 @@
 package Net::Amazon::EC2::ConfirmProductInstanceResponse;
+
 use strict;
 use Moose;
 
