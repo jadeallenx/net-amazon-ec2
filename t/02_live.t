@@ -206,10 +206,10 @@ my $delete_tags_result = $ec2->delete_tags(
 );
 ok($delete_tags_result == 1, "Checking for delete tags");
 
-note("Describe instance status test takes up to 120 seconds to complete. Be patient.");
+note("Describe instance status test takes up to 600 seconds to complete. Be patient.");
 my $instance_statuses;
 my $loop_count = 0;
-while ( $loop_count < 40 ) {
+while ( $loop_count < 120 ) {
     $instance_statuses = $ec2->describe_instance_status(); 
     if ( not defined $instance_statuses->[0] ) {
         sleep 5;
@@ -257,10 +257,10 @@ foreach my $offering (@{$reserved_instance_offerings}) {
 }
 ok($seen_offering == 1, "Describing Reserved Instances Offerings");
 
-note("Delete security group test takes up to 120 seconds to complete. Be patient.");
+note("Delete security group test takes up to 600 seconds to complete. Be patient.");
 # delete_security_group
 $loop_count = 0;
-while ( $loop_count < 20 ) {
+while ( $loop_count < 120 ) {
     $delete_group_result = $ec2->delete_security_group(GroupName => "test_group");
     if ( ref($delete_group_result) =~ /Error/ ) {
         # If we get an error, loop until we don't
