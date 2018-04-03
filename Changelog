@@ -1,3 +1,6 @@
+0.36   2018-04-03       
+                        Support connecting to China regions if appropriate in
+                        the base URL
 0.35   2017-12-29
                         Fix authentication errors using IAM security tokens
                         provided by instance metadata in signature v4
